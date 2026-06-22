@@ -11,9 +11,12 @@ import { sourceTemplate } from '@/lib/context/templates'
 import { modePersona } from '@/lib/modes/personas'
 import { buildPageContext, contextToPromptBlock, type RawExtract } from '@/lib/context/pageContext'
 import { getFeature } from '@/lib/features/registry'
+import { sectionsToCopyText } from '@/lib/features/parse'
 import { createClaudeClient } from '@/lib/claude/client'
 import { config } from '@/lib/config'
 import { extractFromPage } from '@/content/extract'
+import { createDefaultOrchestrator, reportToSections, type AgentContext } from '@/lib/agents'
+import { addRunRecord, buildRunRecord } from '@/lib/storage/intelligence'
 
 // Open the side panel when the toolbar icon is clicked.
 chrome.runtime.onInstalled.addListener(() => {
@@ -187,12 +190,148 @@ async function handleRunFeature(
   return { ok: true, data: result }
 }
 
+// A canned synthesis for demo mode (no API call) — exercises the decision card.
+const DEMO_REPORT = {
+  executiveSummary:
+    'Sample multi-agent synthesis. The feature targets a real workflow, but demand and rollout risk are under-evidenced in the document.',
+  recommendation: 'Build a thin slice behind a flag and validate the core assumption before a full rollout.',
+  confidence: 0.6,
+  supportingEvidence: ['The problem is clearly articulated and ties to a stated business goal.'],
+  contradictingEvidence: ['No evidence the problem is frequent enough to prioritize now.'],
+  risks: ['Adoption risk: unclear trigger for users to engage.', 'Rollout risk: no staged plan.'],
+  openQuestions: ['What is the baseline for the success metric?', 'Which segment feels this most?'],
+  suggestedExperiments: ['Ship to 5% and measure activation vs. control over two weeks.'],
+  missingRequirements: ['Acceptance criteria', 'Instrumentation / success-metric definition'],
+  finalVerdict: 'Promising but unproven — de-risk with a cheap validation before committing.',
+  decision: {
+    recommendation: 'validate_first' as const,
+    confidence: 0.6,
+    rationale: [
+      'Problem is clear but demand is unproven.',
+      'Cheap validation will materially reduce uncertainty.',
+    ],
+  },
+}
+
+async function handleDeepReview(
+  tabId: number,
+  reviewContext?: ReviewContext,
+): Promise<Reply<ResultDoc>> {
+  const settings = await getSettings()
+
+  // Demo mode: render the canned report through the real card pipeline, no API call.
+  if (settings.demoMode || config.demoMode) {
+    let pageTitle = 'Sample page'
+    let url = ''
+    let source: DetectedSource = 'generic'
+    try {
+      const info = await injectGetPageInfo(tabId)
+      url = info.url
+      pageTitle = info.title || pageTitle
+      source = detectSource(url)
+    } catch {
+      /* restricted page — still return the sample */
+    }
+    await new Promise((r) => setTimeout(r, 700))
+    const sections = reportToSections(DEMO_REPORT)
+    const result: ResultDoc = {
+      feature: 'pm_review',
+      title: 'Deep Intelligence (sample)',
+      sections,
+      copyText: sectionsToCopyText('Deep Intelligence', sections),
+    }
+    await addHistory({
+      id: newHistoryId(),
+      timestamp: Date.now(),
+      pageTitle,
+      url,
+      source,
+      feature: 'pm_review',
+      mode: settings.mode,
+      result,
+    })
+    return { ok: true, data: result }
+  }
+
+  if (!config.hasBackend && !settings.apiKey) {
+    return { ok: false, error: 'Add your API key in Settings first.' }
+  }
+
+  const raw = await injectExtract(tabId)
+  const source = detectSource(raw.url)
+  const ctx = buildPageContext(raw, source, 20_000)
+  const userContext = await getUserContext()
+  const clientId = await getClientId()
+
+  const agentContext: AgentContext = {
+    document: ctx.content,
+    productName: userContext.productName || undefined,
+    industry: userContext.industry || undefined,
+    featureName: reviewContext?.featureName || undefined,
+    metadata: { userContext, reviewContext, source, clientId },
+  }
+
+  const model = settings.model === 'auto' ? 'claude-sonnet-4-6' : settings.model
+  const orchestrator = createDefaultOrchestrator({ model, apiKey: settings.apiKey })
+  const out = await orchestrator.run(agentContext)
+
+  if (out.usage) {
+    console.log('[PM Co-Pilot] deep review token usage', {
+      ran: out.ranAgentIds,
+      skipped: out.skippedAgentIds,
+      decision: out.report.decision.recommendation,
+      ...out.usage,
+    })
+  }
+
+  const sections = reportToSections(out.report)
+  const result: ResultDoc = {
+    feature: 'pm_review',
+    title: 'Deep Intelligence',
+    sections,
+    copyText: sectionsToCopyText('Deep Intelligence', sections),
+    usage: out.usage,
+  }
+
+  const ts = Date.now()
+  // Capture the structured run (foundation for the Intelligence Graph).
+  try {
+    await addRunRecord(
+      buildRunRecord({
+        id: newHistoryId(),
+        timestamp: ts,
+        url: ctx.url,
+        source,
+        classification: out.classification,
+        result: out,
+      }),
+    )
+  } catch (e) {
+    console.warn('[PM Co-Pilot] run-record capture failed', e)
+  }
+
+  await addHistory({
+    id: newHistoryId(),
+    timestamp: ts,
+    pageTitle: ctx.title,
+    url: ctx.url,
+    source,
+    feature: 'pm_review',
+    mode: settings.mode,
+    result,
+  })
+
+  return { ok: true, data: result }
+}
+
 async function dispatch(req: Request): Promise<Reply<unknown>> {
   switch (req.type) {
     case 'GET_PAGE_INFO':
       return handleGetPageInfo(req.tabId)
     case 'RUN_FEATURE':
       return handleRunFeature(req.tabId, req.featureId, req.reviewContext)
+    case 'RUN_DEEP_REVIEW':
+      return handleDeepReview(req.tabId, req.reviewContext)
     case 'VALIDATE_KEY':
       return handleValidateKey(req.apiKey)
     default:

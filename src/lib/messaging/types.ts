@@ -10,6 +10,7 @@ export interface PageInfo {
 export type Request =
   | { type: 'GET_PAGE_INFO'; tabId: number }
   | { type: 'RUN_FEATURE'; tabId: number; featureId: FeatureId; reviewContext?: ReviewContext }
+  | { type: 'RUN_DEEP_REVIEW'; tabId: number; reviewContext?: ReviewContext }
   | { type: 'VALIDATE_KEY'; apiKey: string }
 
 export type Ok<T> = { ok: true; data: T }
@@ -20,9 +21,11 @@ export type ReplyFor<R extends Request> = R extends { type: 'GET_PAGE_INFO' }
   ? Reply<PageInfo>
   : R extends { type: 'RUN_FEATURE' }
     ? Reply<ResultDoc>
-    : R extends { type: 'VALIDATE_KEY' }
-      ? Reply<{ valid: true }>
-      : never
+    : R extends { type: 'RUN_DEEP_REVIEW' }
+      ? Reply<ResultDoc>
+      : R extends { type: 'VALIDATE_KEY' }
+        ? Reply<{ valid: true }>
+        : never
 
 /** Typed wrapper around chrome.runtime.sendMessage. */
 export function sendMessage<R extends Request>(req: R): Promise<ReplyFor<R>> {

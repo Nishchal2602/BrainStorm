@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FeatureId, ResultDoc, ReviewContext, Settings as SettingsType } from '@/lib/types'
-import type { PageInfo } from '@/lib/messaging/types'
+import type { PageInfo, Reply } from '@/lib/messaging/types'
 import { sendMessage } from '@/lib/messaging/types'
 import { DEFAULT_SETTINGS, getSettings, setSettings } from '@/lib/storage/settings'
 import { getAllowanceExhausted, setAllowanceExhausted } from '@/lib/storage/client'
@@ -35,6 +35,7 @@ export default function App() {
   const [onboarded, setOnboarded] = useState(true)
   const [dismissed, setDismissed] = useState(false)
   const [pendingReview, setPendingReview] = useState(false)
+  const [deepRunning, setDeepRunning] = useState(false)
 
   const loadSettings = useCallback(async () => {
     try {
@@ -105,15 +106,7 @@ export default function App() {
     await execFeature(id)
   }
 
-  const execFeature = async (id: FeatureId, reviewContext?: ReviewContext) => {
-    if (!tabId) {
-      setError('Open PM Co-Pilot on a web page first.')
-      return
-    }
-    setRunning(id)
-    setError(null)
-    setResult(null)
-    const res = await sendMessage({ type: 'RUN_FEATURE', tabId, featureId: id, reviewContext })
+  const handleResult = async (res: Reply<ResultDoc>) => {
     if (res.ok) setResult(res.data)
     else if (res.code === 'demo_allowance_exhausted') {
       setExhausted(true)
@@ -123,7 +116,44 @@ export default function App() {
         /* storage unavailable */
       }
     } else setError(res.error)
-    setRunning(null)
+  }
+
+  const execFeature = async (id: FeatureId, reviewContext?: ReviewContext) => {
+    if (!tabId) {
+      setError('Open PM Co-Pilot on a web page first.')
+      return
+    }
+    setRunning(id)
+    setError(null)
+    setResult(null)
+    try {
+      const res = await sendMessage({ type: 'RUN_FEATURE', tabId, featureId: id, reviewContext })
+      await handleResult(res)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.')
+    } finally {
+      setRunning(null)
+    }
+  }
+
+  const execDeepReview = async (reviewContext: ReviewContext) => {
+    if (!tabId) {
+      setError('Open PM Co-Pilot on a web page first.')
+      return
+    }
+    setRunning('pm_review')
+    setDeepRunning(true)
+    setError(null)
+    setResult(null)
+    try {
+      const res = await sendMessage({ type: 'RUN_DEEP_REVIEW', tabId, reviewContext })
+      await handleResult(res)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.')
+    } finally {
+      setRunning(null)
+      setDeepRunning(false)
+    }
   }
 
   const persist = async (patch: Partial<SettingsType>) => {
@@ -213,7 +243,13 @@ export default function App() {
             )}
             {running && (
               <Loading
-                label={running === 'pm_review' ? 'Researching the web…' : 'Generating…'}
+                label={
+                  deepRunning
+                    ? 'Running multi-agent analysis…'
+                    : running === 'pm_review'
+                      ? 'Researching the web…'
+                      : 'Generating…'
+                }
               />
             )}
             {!running && result && <ResultView result={result} />}
@@ -224,9 +260,10 @@ export default function App() {
       {pendingReview && (
         <ReviewContextModal
           onCancel={() => setPendingReview(false)}
-          onRun={(rc) => {
+          onRun={(rc, deep) => {
             setPendingReview(false)
-            execFeature('pm_review', rc)
+            if (deep) execDeepReview(rc)
+            else execFeature('pm_review', rc)
           }}
         />
       )}

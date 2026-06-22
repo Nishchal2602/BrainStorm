@@ -47,7 +47,7 @@ export function HistoryView({
         >
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-slate-900">
-              {getFeature(e.feature)?.label ?? e.feature}
+              {e.result.title || (getFeature(e.feature)?.label ?? e.feature)}
             </span>
             <span className="text-[11px] text-slate-400">{timeAgo(e.timestamp)}</span>
           </div>

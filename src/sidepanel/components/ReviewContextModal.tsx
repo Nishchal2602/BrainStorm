@@ -18,11 +18,12 @@ export function ReviewContextModal({
   onRun,
   onCancel,
 }: {
-  onRun: (ctx: ReviewContext) => void
+  onRun: (ctx: ReviewContext, deep: boolean) => void
   onCancel: () => void
 }) {
   const [ctx, setCtx] = useState<ReviewContext>(DEFAULT_REVIEW_CONTEXT)
   const [showErrors, setShowErrors] = useState(false)
+  const [deep, setDeep] = useState(false)
   const touched = useRef(false)
 
   useEffect(() => {
@@ -49,7 +50,7 @@ export function ReviewContextModal({
       setShowErrors(true)
       return
     }
-    onRun(ctx)
+    onRun(ctx, deep)
   }
 
   return (
@@ -120,6 +121,21 @@ export function ReviewContextModal({
           <p className="-mt-1.5 text-[11px] text-slate-400">
             {FAMILIARITY_HINT[ctx.familiarityLevel]}
           </p>
+
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
+            <input
+              type="checkbox"
+              checked={deep}
+              onChange={(e) => setDeep(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-brand-600"
+            />
+            <span className="text-[12px] leading-relaxed text-slate-600">
+              <span className="font-medium text-slate-800">🧪 Deep multi-agent analysis (beta)</span>
+              <br />
+              Classifies the doc, runs specialist agents, and returns a build decision. Slower; more
+              thorough.
+            </span>
+          </label>
         </div>
 
         <div className="mt-4 flex gap-2">
@@ -133,7 +149,7 @@ export function ReviewContextModal({
             onClick={submit}
             className="flex-1 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700"
           >
-            Run PM Review
+            {deep ? 'Run Deep Analysis' : 'Run PM Review'}
           </button>
         </div>
       </div>
