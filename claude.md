@@ -47,16 +47,16 @@ The result is:
 
 PM Co-Pilot sits inside the browser and provides contextual AI assistance on any page.
 
-Users can invoke the extension while viewing:
+It works on any web page, with first-class page-type detection for:
 
 * Jira tickets
 * Confluence pages
 * Notion docs
-* PRDs
-* Technical documentation
-* GitHub pull requests
-* Product requirement documents
-* Competitor websites
+* Linear issues
+* Google Docs
+* Generic web pages (PRDs, technical docs, competitor sites, articles)
+
+GitHub and Slack are future surfaces (not in the current MVP).
 
 The extension understands page content and generates PM-focused outputs.
 
@@ -72,8 +72,6 @@ The extension understands page content and generates PM-focused outputs.
 * Product Managers
 * Senior Product Managers
 * Group Product Managers
-
----
 
 ## Secondary Users
 
@@ -107,112 +105,73 @@ Users should be able to:
 
 ---
 
-# MVP Features
+# Current MVP Scope
 
-## 1. Page Summarization
+The MVP is focused on validating demand from real Product Managers. Build only what is required to validate usage and retention.
 
-### User Flow
+**Active now:**
 
-User opens any webpage.
+* PM Review (flagship) — the only live feature.
 
-Clicks:
+**Built, gated behind a "Soon" flag** (launching = flipping the flag):
 
-```text
-Summarize Page
-```
+* Action Item Extraction
+* Slack Update Generation
+* Summarization
 
-System generates:
+**Context layer (added):**
 
-* Executive Summary
-* Key Insights
+* One-time onboarding profile + a lightweight per-review context, injected into PM Review.
+
+**V2 direction (opt-in beta):**
+
+* Deep Intelligence — a lightweight, token-minimal multi-agent path that classifies the doc, runs specialist agents, and returns a build decision (see Product Direction).
+
+Still out of scope:
+
+* Team collaboration features
+* Authentication systems / user accounts
+* Enterprise permissions
+* Databases (browser storage only for now)
+* Heavy infrastructure or a workflow-orchestration platform
+
+Note: a single lightweight orchestrator now exists as the opt-in V2 path (≈2 LLM calls per run, no orchestration platform). Keep it minimal — "avoid heavy multi-agent/orchestration infra" still holds.
+
+The objective is validation, not platform completeness.
+
+---
+
+# Flagship Feature
+
+## PM Review
+
+PM Review is the primary differentiator.
+
+The review should behave like a strong Senior Product Manager reviewing work.
+
+Reviews should evaluate:
+
+* Problem clarity
+* User understanding
+* Success metrics
+* Solution quality
+* Requirements completeness
 * Risks
-* Open Questions
+* Edge cases
+* Technical feasibility
+* Execution readiness
 
----
+Reviews should not primarily focus on:
 
-## 2. Action Item Extraction
+* Grammar
+* Formatting
+* Writing style
 
-### User Flow
+The objective is improving product thinking and execution quality.
 
-User opens:
+PM Review now uses captured context — the onboarding profile plus a per-review feature/problem/target-user/success-metric — to judge whether the proposed solution actually solves the stated problem and achieves the outcome, not just the document in isolation.
 
-* Meeting notes
-* PRD
-* Ticket
-* Documentation
-
-Clicks:
-
-```text
-Extract Action Items
-```
-
-System returns:
-
-* Tasks
-* Owners (if identifiable)
-* Priority
-* Due dates (if mentioned)
-
----
-
-## 3. Slack Update Generator
-
-### User Flow
-
-User opens:
-
-* Jira ticket
-* GitHub PR
-* Linear task
-
-Clicks:
-
-```text
-Generate Slack Update
-```
-
-Output:
-
-```text
-🚀 Progress Update
-
-Completed:
-...
-
-In Progress:
-...
-
-Blocked:
-...
-```
-
----
-
-## 4. PRD Skeleton Generator
-
-### User Flow
-
-User opens:
-
-* Feature request
-* Ticket
-* Customer feedback thread
-
-Clicks:
-
-```text
-Generate PRD
-```
-
-System generates:
-
-* Problem Statement
-* Goals
-* User Stories
-* Success Metrics
-* Risks
-* Open Questions
+An opt-in **Deep Intelligence (beta)** path runs the V2 multi-agent orchestrator and ends in a build decision (see Product Direction).
 
 ---
 
@@ -224,8 +183,6 @@ Context Before Generation
 
 The AI should first understand the page before producing output.
 
----
-
 ## Principle 2
 
 Speed Matters
@@ -234,129 +191,215 @@ All actions should complete within a few seconds.
 
 The extension should feel instantaneous.
 
----
-
 ## Principle 3
 
 Minimize User Input
 
-The extension should infer as much context as possible from the page.
+Infer as much context as possible from the page.
 
-Users should not need to repeatedly explain context.
+Do not repeatedly ask users for information that can be derived automatically.
 
----
+Deliberate exception: a one-time onboarding profile and a lightweight, prefilled per-review context are captured to make reviews specific. Keep this minimal — single-line fields, autosaved, skippable.
 
 ## Principle 4
 
 Professional Output
 
-Generated content should be ready for work usage.
+Generated content should be ready for workplace usage.
 
 Outputs should require minimal editing.
 
 ---
 
-# Technical Architecture
+# Product Decision Framework
+
+When multiple implementation options exist:
+
+1. Prefer simplicity over extensibility.
+2. Prefer shipping over abstraction.
+3. Prefer user value over engineering elegance.
+4. Prefer explicit code over clever code.
+5. Avoid solving hypothetical future problems.
+6. Build the smallest solution that can validate a hypothesis.
+7. Do not create infrastructure before it is needed.
+8. Optimize for learning speed.
+
+---
+
+# Technical Stack
 
 ## Frontend
-
-Chrome Extension
-
-Stack:
 
 * React
 * TypeScript
 * TailwindCSS
 * Vite
 
----
-
 ## AI Layer
 
-Primary Model:
+Provider-agnostic client seam (`createClaudeClient`) that selects the transport by the configured/pasted key:
 
-* Claude API
+* **Google Gemini** — the active backend for the MVP/validation (default `gemini-2.5-flash`).
+* **Anthropic Claude** — supported (BYOK `sk-ant-…` or the owner-key proxy); auto-detected by key prefix.
 
-Responsibilities:
-
-* Summarization
-* Extraction
-* Draft generation
-* PRD creation
-
----
-
-## Backend (Optional MVP)
-
-Node.js or FastAPI
+Use the latest, most capable models. Keep prompts centralized and token-minimal.
 
 Responsibilities:
 
-* API proxy
-* Rate limiting
+* PM Review (web-grounded)
+* Document classification + final synthesis (V2 Deep Intelligence)
+* Action Items / Slack Updates / Summarization (structured output; currently gated "Soon")
+
+## Backend
+
+Only introduce backend services when required.
+
+Implemented:
+
+* Cloudflare Worker proxy (owner-key mode) — holds the API key server-side, enforces per-user + daily caps. Optional: the extension also supports BYOK and a build-time key.
+
+Potential future responsibilities:
+
 * Usage tracking
-* Prompt orchestration
+* Intelligence Graph sync (see Product Direction)
 
 ---
 
-## Data Flow
+# Engineering Principles
 
-```text
-User Opens Page
-        ↓
-Content Extracted
-        ↓
-Page Context Builder
-        ↓
-Prompt Constructor
-        ↓
-Claude API
-        ↓
-Structured Response
-        ↓
-Extension UI
-```
+## Code Quality
+
+All code should be production quality.
+
+Prefer:
+
+* Readability
+* Simplicity
+* Maintainability
+
+Avoid:
+
+* Premature optimization
+* Over-abstraction
+* Unnecessary complexity
+
+## Architecture
+
+* Keep business logic outside UI components.
+* Favor pure functions where possible.
+* Reuse existing patterns.
+* Keep prompts centralized.
+* Avoid duplicated logic.
+* Avoid duplicated prompt templates.
+
+## Refactoring
+
+Do not perform large refactors unless explicitly requested.
+
+When modifying code:
+
+* Understand existing patterns first.
+* Extend existing systems when reasonable.
+* Minimize disruption.
 
 ---
 
-# Future Features
+# Output Quality Standards
 
+Generated outputs should be:
 
-## Multi-page intelligence
+* Professional
+* Structured
+* Concise
+* Actionable
 
-PRD
-+
-Jira Epic
-+
-Design Doc
-+
-Customer Feedback
+Avoid:
 
-→ Single recommendation
+* Generic AI language
+* Excessive disclaimers
+* Filler content
+* Repetition
 
+The output should feel ready to paste into:
 
-## Company context
+* Slack
+* Jira
+* Notion
+* Confluence
+* Product documents
 
-Previous PRDs
-Roadmap
-Strategy
-Metrics
+---
 
-→ Recommendations aware of organizational context
+# Working Style
 
+Before implementing:
 
+1. Understand the existing codebase.
+2. Explain the proposed approach.
+3. Identify impacted files.
+4. Reuse existing patterns.
+5. Implement the smallest viable change.
 
-## Agentic PM
+When uncertain:
 
-Research
-↓
-Generate PRD
-↓
-Generate Tickets
-↓
-Generate Success Metrics
-↓
-Generate Launch Plan
+* Ask a question.
+* Do not make assumptions.
+
+When building:
+
+Think like a startup engineer working directly with the founder.
+
+---
+
+# Git Rules
+
+Before creating any commit:
+
+1. Run:
+
+   git config user.name
+
+   git config user.email
+
+2. Verify:
+
+   user.name = Nishchal Mundotia
+
+   user.email = [nishchalmundotia2002@gmail.com](mailto:nishchalmundotia2002@gmail.com)
+
+3. If values differ:
+
+   * Stop immediately.
+   * Ask for confirmation.
+   * Do not commit.
+
+4. Never add:
+
+   * Co-authored-by metadata
+   * AI attribution
+   * Generated-by metadata
+
+5. Never modify git configuration without explicit approval.
+
+---
+
+# Product Direction (V2)
+
+Evolve PM Co-Pilot from a document reviewer into an AI Product Intelligence platform.
+
+## Multi-agent Product Intelligence
+
+An orchestrator classifies the document, decides which specialist agents are relevant (Customer Voice, Research, Competitor, Compliance, Solution Critic, PRD Quality), runs them in parallel, and synthesizes their findings. Agents are contract-only stubs today (no external retrieval); the framework is built so each becomes a real implementation as an isolated change. Token-minimal: only classification + synthesis call the model.
+
+## Recommendation Engine
+
+Synthesis ends in a decision, not just a report: `build` / `build_with_changes` / `validate_first` / `do_not_build`, with confidence and rationale.
+
+## Intelligence Graph (the data moat)
+
+Every run captures structured data — industry, feature category, risks, competitors, pain points, missing requirements, decision. Aggregated across many runs this becomes proprietary product intelligence (e.g. "across N fintech onboarding PRDs, the top missing requirement is fraud scenarios"). Capture is live; the cross-user graph/dashboard + backend sync are future.
+
+---
 
 # Success Metrics
 
@@ -366,16 +409,13 @@ Generate Launch Plan
 * Daily Active Users
 * Retention
 
----
-
 ## Product Metrics
 
 * Summaries Generated
 * Action Items Extracted
 * Slack Updates Generated
 * PRDs Generated
-
----
+* PM Reviews Generated
 
 ## Business Metrics
 
@@ -386,15 +426,16 @@ Generate Launch Plan
 
 ---
 
-# MVP Definition
+# MVP Success Criteria
 
 The MVP is successful when:
 
-1. Users can install from Chrome Store.
+1. Users can install from the Chrome Store.
 2. Users can summarize any page.
 3. Users can extract action items.
 4. Users can generate Slack updates.
 5. Users can generate PRD skeletons.
-6. At least 10 real PMs use it repeatedly.
+6. Users can run PM Reviews.
+7. At least 10 real PMs use the product repeatedly.
 
-The objective of MVP is validation, not perfection.
+The objective of the MVP is validation, learning, and retention—not perfection.
