@@ -1,0 +1,22 @@
+name = "pm-copilot-proxy"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+# Call caps that bound spend (override per environment as needed).
+[vars]
+GLOBAL_DAILY_CAP = "40"
+PER_IP_DAILY_CAP = "10"
+# Per-user PM Review allowance (total, no reset). Keyed by X-Client-Id + X-PM-Depth.
+QUICK_CAP = "3"
+STANDARD_CAP = "2"
+DEEP_CAP = "1"
+
+# Rate-limit counters. Create the namespace and paste its id:
+#   wrangler kv namespace create RL
+[[kv_namespaces]]
+binding = "RL"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Secrets are NOT stored here. Set them with:
+#   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put PROXY_SHARED_SECRET
