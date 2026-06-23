@@ -1,4 +1,5 @@
 import { withTimeout } from '../../runtime'
+import type { Logger } from '../../logger'
 import type { DiscussionDoc, RedditComment } from './types'
 
 const SEARCH_QUERIES_CAP = 8
@@ -12,6 +13,35 @@ const CONCURRENCY = 4
 const BODY_CAP = 600
 const COMMENT_CAP = 400
 const MIN_COMMENT_LEN = 40
+
+// Common words that shouldn't count toward topical relevance.
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'for', 'to', 'of', 'in', 'on', 'at', 'by', 'with',
+  'is', 'are', 'be', 'was', 'were', 'it', 'this', 'that', 'these', 'those', 'as', 'from',
+  'how', 'why', 'what', 'when', 'who', 'do', 'does', 'their', 'our', 'your', 'they', 'we',
+  'too', 'so', 'not', 'no', 'can', 'will', 'would', 'should', 'about', 'into', 'than',
+  'reddit', 'using', 'use', 'used', 'get', 'getting', 'problem', 'issue', 'issues',
+])
+
+/** Distinct meaningful terms from the problem, for lexical relevance scoring. */
+function buildTermSet(relevanceTerms: string[]): Set<string> {
+  const set = new Set<string>()
+  for (const t of relevanceTerms) {
+    for (const w of t.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (w.length >= 3 && !STOPWORDS.has(w)) set.add(w)
+    }
+  }
+  return set
+}
+
+/** Count of distinct problem terms present in the post's title + body. */
+function relevanceOf(doc: DiscussionDoc, terms: Set<string>): number {
+  if (!terms.size) return 1 // no terms to gate on → don't filter anything
+  const text = `${doc.title} ${doc.body}`.toLowerCase()
+  let n = 0
+  for (const term of terms) if (text.includes(term)) n++
+  return n
+}
 
 interface RawPost {
   id?: string
@@ -96,11 +126,16 @@ async function fetchTopComments(doc: DiscussionDoc): Promise<RedditComment[]> {
 }
 
 /**
- * Reddit-first retrieval: global + priority-subreddit searches, dedup, top posts
- * by score, then top comments for the strongest posts. Returns whatever it can
- * get; an empty array means Reddit was unavailable (caller falls back).
+ * Reddit-first retrieval: global + priority-subreddit searches, dedup, then
+ * filter/rank by RELEVANCE to the problem (not raw upvotes), and fetch top
+ * comments for the most relevant posts. Returns whatever it can get; an empty
+ * array means Reddit was unavailable (caller falls back).
  */
-export async function searchReddit(queries: string[]): Promise<DiscussionDoc[]> {
+export async function searchReddit(
+  queries: string[],
+  relevanceTerms: string[] = [],
+  logger?: Logger,
+): Promise<DiscussionDoc[]> {
   const qs = queries.slice(0, SEARCH_QUERIES_CAP)
   if (!qs.length) return []
 
@@ -124,7 +159,23 @@ export async function searchReddit(queries: string[]): Promise<DiscussionDoc[]> 
     }
   }
 
-  const docs = [...byId.values()].sort((a, b) => b.score - a.score).slice(0, POSTS_CAP)
+  // Relevance gate: score by problem-term overlap, drop zero-match (off-topic)
+  // posts, and rank by relevance first, engagement second — so a viral but
+  // off-topic post no longer outranks a niche relevant one.
+  const terms = buildTermSet(relevanceTerms)
+  const all = [...byId.values()]
+  for (const d of all) d.relevanceScore = relevanceOf(d, terms)
+  const relevant = all.filter((d) => (d.relevanceScore ?? 0) > 0)
+  relevant.sort((a, b) => b.relevanceScore! - a.relevanceScore! || b.score - a.score)
+  const docs = relevant.slice(0, POSTS_CAP)
+
+  logger?.info('customer_voice: reddit relevance', {
+    fetched: all.length,
+    kept: docs.length,
+    droppedZeroRelevance: all.length - relevant.length,
+    topRelevance: docs[0]?.relevanceScore ?? 0,
+  })
+
   const top = docs.slice(0, COMMENT_POSTS_CAP)
   const commentLists = await mapPool(top, CONCURRENCY, fetchTopComments)
   top.forEach((doc, i) => {

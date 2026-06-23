@@ -1,12 +1,13 @@
 import type { DocumentAnalysis } from '../../types'
 
-const MAX_QUERIES = 18
+const MAX_QUERIES = 12
 
 /**
  * Build Reddit search queries from the shared DocumentAnalysis. Pure +
- * deterministic. The analysis's searchQueries/synonyms lead (highest signal);
- * we then add persona- and category-qualified variants to widen recall. Deduped
- * (case-insensitive), blanks dropped, capped at MAX_QUERIES (10–18 typical).
+ * deterministic, precision-first: the analyzer's problem-specific searchQueries
+ * lead, followed by the core problem and persona/category-qualified core-problem
+ * variants. We deliberately do NOT emit generic "<word> frustrating" style
+ * variants — those pulled off-topic posts. Deduped, blanks dropped, capped.
  */
 export function buildQueries(analysis: DocumentAnalysis | undefined): string[] {
   if (!analysis) return []
@@ -15,13 +16,11 @@ export function buildQueries(analysis: DocumentAnalysis | undefined): string[] {
   const core = (coreProblem ?? '').trim()
   const variants: string[] = [
     ...searchQueries,
-    ...synonyms,
     core,
-    // Persona- and category-qualified phrasings users actually post.
     persona && core ? `${persona} ${core}` : '',
-    persona ? `${persona} frustration` : '',
     productCategory && core ? `${productCategory} ${core}` : '',
-    ...synonyms.slice(0, 4).map((s) => `${s} frustrating`),
+    // A couple of synonym phrasings, but only the problem-specific ones.
+    ...synonyms.slice(0, 3),
   ]
 
   const seen = new Set<string>()

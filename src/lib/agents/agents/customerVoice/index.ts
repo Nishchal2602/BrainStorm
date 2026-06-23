@@ -58,7 +58,12 @@ export class CustomerVoiceAgent implements Agent {
 
     try {
       this.logger.info('customer_voice: searching reddit', { coreProblem: problem, queries: queries.length })
-      let docs = await searchReddit(queries)
+      const relevanceTerms = [
+        analysis?.coreProblem ?? '',
+        ...(analysis?.synonyms ?? []),
+        analysis?.featureCategory ?? '',
+      ].filter(Boolean)
+      let docs = await searchReddit(queries, relevanceTerms, this.logger)
       let extraction
       let usage
       let usedFallback = false

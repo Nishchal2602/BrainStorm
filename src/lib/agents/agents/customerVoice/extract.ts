@@ -51,17 +51,22 @@ const SCHEMA = {
   required: ['themes', 'userSegments', 'sentimentSummary'],
 } as const
 
-const SYSTEM = `You are a user researcher analyzing real discussions to find evidence of a product problem. You are given numbered discussions (Reddit posts + top comments). Cluster the genuine complaints into a small set of NON-DUPLICATE pain themes.
+const SYSTEM = `You are a user researcher analyzing real discussions to find evidence of ONE specific product problem (stated under "PROBLEM UNDER REVIEW"). You are given numbered discussions (Reddit posts + top comments). Cluster the genuine complaints into a small set of NON-DUPLICATE pain themes.
 
-Rules:
+RELEVANCE IS THE PRIORITY — be strict:
+- Every theme must be a FACET OF THE STATED PROBLEM, not merely the same product/industry/domain. Being in the same field is NOT relevance.
+- Every quote must DIRECTLY express the stated problem (or a clear sub-problem of it).
+- EXCLUDE any discussion that is off-topic or only tangentially related — drop it entirely. Do not stretch or manufacture thematic relevance to a quote that is really about something else.
+- If, after filtering, there is no genuine on-topic evidence, return empty themes. Empty is correct — do not pad with loosely-related content.
+
+Other rules:
 - Use ONLY quotes copied VERBATIM from the provided discussions — never paraphrase or invent. Copy the exact wording.
 - Cite each quote's source with its docIndex (the [#] of the discussion it came from).
-- Include only evidence-bearing complaints/frustrations about the problem. IGNORE jokes, off-topic remarks, generic advice, and praise.
-- Merge similar complaints into one theme; do not create duplicate or near-duplicate themes. Name each theme as a short complaint (e.g. "Verification takes too long").
+- Ignore jokes, generic advice, and praise.
+- Merge similar complaints into one theme; no duplicate/near-duplicate themes. Name each theme as a short complaint (e.g. "Verification takes too long").
 - emotionScore (0–3): how emotionally intense/frustrated the complaints in the theme are (0 = mild, 3 = very frustrated).
-- userSegments: who experiences this (e.g. "first-time founders", "small businesses", "international users") — only if evident.
-- sentimentSummary: 1–2 sentences on overall sentiment.
-- If the discussions contain no real evidence of the problem, return empty themes.`
+- userSegments: who experiences this (e.g. "first-time founders", "small businesses") — only if evident.
+- sentimentSummary: 1–2 sentences on overall sentiment.`
 
 function renderDocs(docs: DiscussionDoc[]): string {
   return docs

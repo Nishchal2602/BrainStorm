@@ -14,4 +14,6 @@ export interface DiscussionDoc {
   url: string
   body: string
   comments: RedditComment[]
+  /** How many distinct problem terms appear in title+body (relevance gate/rank). */
+  relevanceScore?: number
 }
