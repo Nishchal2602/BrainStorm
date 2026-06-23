@@ -19,6 +19,7 @@ export type { Logger } from './logger'
 export { AgentRegistry } from './registry'
 export { Orchestrator } from './orchestrator'
 export { reportToSections } from './synthesis'
+export { customerVoiceSections } from './agents/customerVoice/sections'
 
 export interface CreateOrchestratorDeps {
   /** Active model (Gemini in practice; ignored when a Gemini/proxy key is set). */
@@ -49,6 +50,7 @@ export function createDefaultOrchestrator(deps: CreateOrchestratorDeps): Orchest
     analyzer: new DocumentAnalyzer(llm, logger),
     synthesizer: new Synthesizer(llm, logger),
     logger,
-    agentTimeoutMs: deps.agentTimeoutMs,
+    // Real retrieval (Reddit fetch + comments) is slower than a stub; give agents headroom.
+    agentTimeoutMs: deps.agentTimeoutMs ?? 30_000,
   })
 }

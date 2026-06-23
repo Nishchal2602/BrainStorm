@@ -70,7 +70,7 @@ export function buildRunRecord(args: {
     },
     risks: clean(result.report.risks),
     competitors: clean(competitor?.competitors),
-    painPoints: clean(voice?.recurringPainPoints?.map((p) => p.title)),
+    painPoints: clean(voice?.themes?.map((t) => t.name)),
     missingRequirements: clean(result.report.missingRequirements),
     recommendations: clean(result.report.decision.rationale),
   }

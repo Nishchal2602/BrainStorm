@@ -15,7 +15,12 @@ import { sectionsToCopyText } from '@/lib/features/parse'
 import { createClaudeClient } from '@/lib/claude/client'
 import { config } from '@/lib/config'
 import { extractFromPage } from '@/content/extract'
-import { createDefaultOrchestrator, reportToSections, type AgentContext } from '@/lib/agents'
+import {
+  createDefaultOrchestrator,
+  customerVoiceSections,
+  reportToSections,
+  type AgentContext,
+} from '@/lib/agents'
 import { addRunRecord, buildRunRecord } from '@/lib/storage/intelligence'
 
 // Open the side panel when the toolbar icon is clicked.
@@ -284,7 +289,8 @@ async function handleDeepReview(
     })
   }
 
-  const sections = reportToSections(out.report)
+  // Synthesis decision first, then the real customer-evidence cards (quotes + links).
+  const sections = [...reportToSections(out.report), ...customerVoiceSections(out.results)]
   const result: ResultDoc = {
     feature: 'pm_review',
     title: 'Deep Intelligence',

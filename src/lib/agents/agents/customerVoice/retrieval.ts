@@ -1,5 +1,9 @@
 import type { SourceRef, TokenUsage } from '@/lib/types'
+import type { Sentiment } from '../../types'
 import type { LlmPort } from '../../llm'
+import type { ExtractionResult, ExtractedQuote, ExtractedTheme } from './extract'
+import { parseCustomerVoice } from './parse'
+import type { DiscussionDoc } from './types'
 
 export interface RetrievalResult {
   text: string
@@ -13,7 +17,10 @@ export interface RetrievalResult {
  * touching the agent.
  */
 export interface RetrievalService {
-  search(queries: string[], opts?: { maxUses?: number }): Promise<RetrievalResult>
+  search(
+    queries: string[],
+    opts?: { maxUses?: number; meta?: { clientId?: string } },
+  ): Promise<RetrievalResult>
 }
 
 const DEFAULT_MAX_USES = 6
@@ -43,7 +50,10 @@ Rules:
 export class GroundedRetrievalService implements RetrievalService {
   constructor(private readonly llm: LlmPort) {}
 
-  async search(queries: string[], opts?: { maxUses?: number }): Promise<RetrievalResult> {
+  async search(
+    queries: string[],
+    opts?: { maxUses?: number; meta?: { clientId?: string } },
+  ): Promise<RetrievalResult> {
     const user = `SEARCH QUERIES (run these against Reddit and public forums):\n${queries
       .map((q) => `- ${q}`)
       .join('\n')}`
@@ -53,7 +63,52 @@ export class GroundedRetrievalService implements RetrievalService {
       maxTokens: 3000,
       webSearch: { maxUses: opts?.maxUses ?? DEFAULT_MAX_USES },
       label: 'customer_voice_retrieval',
+      meta: opts?.meta,
     })
     return { text, sources, usage }
+  }
+}
+
+const SENTIMENT_EMOTION: Record<Sentiment, number> = { negative: 2.5, neutral: 1, positive: 0 }
+
+/**
+ * Fallback when Reddit is unavailable: one grounded call → parse its clustered
+ * template into DiscussionDoc[] + a synthetic ExtractionResult (no second LLM
+ * call). No engagement scores ⇒ the downstream confidence/severity is lower,
+ * which correctly reflects the weaker, non-verifiable evidence.
+ */
+export async function groundedFallback(
+  llm: LlmPort,
+  queries: string[],
+  meta?: { clientId?: string },
+): Promise<{ docs: DiscussionDoc[]; extraction: ExtractionResult; usage?: TokenUsage }> {
+  const { text, usage } = await new GroundedRetrievalService(llm).search(queries, { meta })
+  const parsed = parseCustomerVoice(text)
+
+  const docs: DiscussionDoc[] = []
+  const themes: ExtractedTheme[] = []
+  for (const c of parsed.clusters) {
+    const quotes: ExtractedQuote[] = []
+    for (const d of c.discussions) {
+      const docIndex = docs.length
+      docs.push({
+        id: d.url || `grounded-${docIndex}`,
+        title: d.title,
+        subreddit: d.source || 'web',
+        score: 0,
+        numComments: 0,
+        url: d.url ?? '',
+        body: d.snippet,
+        comments: [],
+      })
+      if (d.snippet) quotes.push({ docIndex, quote: d.snippet })
+    }
+    themes.push({ name: c.title, emotionScore: SENTIMENT_EMOTION[c.sentiment], quotes })
+  }
+
+  return {
+    docs,
+    extraction: { themes, userSegments: parsed.segments, sentimentSummary: parsed.sentimentSummary },
+    usage,
   }
 }

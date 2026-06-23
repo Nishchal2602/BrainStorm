@@ -1,23 +1,34 @@
 import type { DocumentAnalysis } from '../../types'
 
-const MAX_QUERIES = 6
+const MAX_QUERIES = 18
 
 /**
- * Build the search queries for retrieval from the shared DocumentAnalysis.
- * Pure + deterministic: prefer the analysis's searchQueries, fall back to
- * synonyms / coreProblem, dedup (case-insensitive), drop blanks, cap.
+ * Build Reddit search queries from the shared DocumentAnalysis. Pure +
+ * deterministic. The analysis's searchQueries/synonyms lead (highest signal);
+ * we then add persona- and category-qualified variants to widen recall. Deduped
+ * (case-insensitive), blanks dropped, capped at MAX_QUERIES (10–18 typical).
  */
 export function buildQueries(analysis: DocumentAnalysis | undefined): string[] {
-  const candidates = [
-    ...(analysis?.searchQueries ?? []),
-    ...(analysis?.synonyms ?? []),
-    analysis?.coreProblem ?? '',
+  if (!analysis) return []
+  const { searchQueries = [], synonyms = [], coreProblem, persona, productCategory } = analysis
+
+  const core = (coreProblem ?? '').trim()
+  const variants: string[] = [
+    ...searchQueries,
+    ...synonyms,
+    core,
+    // Persona- and category-qualified phrasings users actually post.
+    persona && core ? `${persona} ${core}` : '',
+    persona ? `${persona} frustration` : '',
+    productCategory && core ? `${productCategory} ${core}` : '',
+    ...synonyms.slice(0, 4).map((s) => `${s} frustrating`),
   ]
+
   const seen = new Set<string>()
   const out: string[] = []
-  for (const raw of candidates) {
-    const q = raw.trim()
-    if (!q) continue
+  for (const raw of variants) {
+    const q = raw.trim().replace(/\s+/g, ' ')
+    if (q.length < 3) continue
     const key = q.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)

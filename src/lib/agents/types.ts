@@ -89,18 +89,43 @@ export interface AgentResult<TData = unknown> {
 }
 
 // --- Per-agent payload shapes (the spec's per-agent outputs) ---
-export interface RecurringPainPoint {
-  title: string
-  frequency: number
-  sentiment: Sentiment
-  /** 0..1 — confidence this is a real recurring pain point (volume × consistency). */
-  confidence: number
+export type CustomerVoiceRecommendation =
+  | 'Build'
+  | 'Validate First'
+  | 'More Research Needed'
+  | 'Weak Signal'
+
+/** One real Reddit quote with its source + engagement strength. */
+export interface CustomerVoiceEvidence {
+  quote: string
+  subreddit: string
+  url: string
+  /** Upvotes on the source post. */
+  postScore: number
+  /** Upvotes on the source comment (0 when the quote is from the post body). */
+  commentScore: number
 }
+
+export interface CustomerVoiceTheme {
+  name: string
+  mentions: number
+  /** 1–10 (frequency + emotion + engagement). */
+  severity: number
+  evidence: CustomerVoiceEvidence[]
+}
+
 export interface CustomerVoicePayload {
-  recurringPainPoints: RecurringPainPoint[]
+  /** 0–100. */
+  confidence: number
+  confidenceLabel: 'Low' | 'Medium' | 'High'
+  discussionCount: number
+  /** Breadth of the signal — distinct subreddits the evidence spans. */
+  distinctSubreddits: string[]
+  themes: CustomerVoiceTheme[]
+  /** Who experiences the problem. */
   userSegments: string[]
   sentimentSummary: string
-  supportingEvidence: Evidence[]
+  recommendation: CustomerVoiceRecommendation
 }
 export interface ResearchPayload {
   supportingEvidence: Evidence[]
