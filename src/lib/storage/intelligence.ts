@@ -2,7 +2,6 @@ import type { DetectedSource } from '@/lib/types'
 import type {
   AgentResult,
   BuildDecision,
-  Classification,
   CompetitorPayload,
   CustomerVoicePayload,
   OrchestrationResult,
@@ -49,10 +48,10 @@ export function buildRunRecord(args: {
   timestamp: number
   url?: string
   source: DetectedSource
-  classification: Classification
   result: OrchestrationResult
 }): RunRecord {
   const { result } = args
+  const { analysis } = result
   const competitor = findData<CompetitorPayload>(result.results, 'competitor')
   const voice = findData<CustomerVoicePayload>(result.results, 'customer_voice')
 
@@ -61,17 +60,17 @@ export function buildRunRecord(args: {
     timestamp: args.timestamp,
     url: args.url,
     source: args.source,
-    industry: args.classification.industry,
-    productCategory: args.classification.productCategory,
-    featureCategory: args.classification.featureCategory,
-    regulatorySensitivity: args.classification.regulatorySensitivity,
+    industry: analysis.industry,
+    productCategory: analysis.productCategory,
+    featureCategory: analysis.featureCategory,
+    regulatorySensitivity: analysis.regulatorySensitivity,
     decision: {
       recommendation: result.report.decision.recommendation,
       confidence: result.report.decision.confidence,
     },
     risks: clean(result.report.risks),
     competitors: clean(competitor?.competitors),
-    painPoints: clean(voice?.recurringPainPoints),
+    painPoints: clean(voice?.recurringPainPoints?.map((p) => p.title)),
     missingRequirements: clean(result.report.missingRequirements),
     recommendations: clean(result.report.decision.rationale),
   }

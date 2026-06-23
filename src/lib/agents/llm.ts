@@ -26,8 +26,8 @@ export interface TextRequest {
 
 /**
  * Dependency-injection seam between the agent framework and the concrete LLM
- * transport. Lets the orchestrator/classifier/synthesizer be tested with a fake
- * and keeps them decoupled from createClaudeClient.
+ * transport. Lets the analyzer/synthesizer/agents be tested with a fake and
+ * keeps them decoupled from createClaudeClient.
  */
 export interface LlmPort {
   generateStructured<T>(req: StructuredRequest): Promise<{ data: T; usage?: TokenUsage }>

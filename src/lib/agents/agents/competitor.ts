@@ -1,7 +1,7 @@
 import type { Agent } from '../agent'
 import type { Logger } from '../logger'
 import type { AgentContext, AgentResult, CompetitorPayload } from '../types'
-import { getClassification, getReviewContext } from './shared'
+import { getDocumentAnalysis, getReviewContext } from './shared'
 
 const STUB = 'Competitor Intelligence not yet implemented (no external retrieval).'
 
@@ -15,7 +15,7 @@ export class CompetitorIntelligenceAgent implements Agent {
   constructor(private readonly logger: Logger) {}
 
   async shouldRun(ctx: AgentContext): Promise<boolean> {
-    const c = getClassification(ctx)
+    const c = getDocumentAnalysis(ctx)
     if (c?.isNewProduct) return true
     if (c && c.productCategory !== 'Unknown') return true
     const rt = getReviewContext(ctx)?.reviewType

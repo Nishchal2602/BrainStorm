@@ -1,7 +1,7 @@
 import type { Agent } from '../agent'
 import type { Logger } from '../logger'
 import type { AgentContext, AgentResult, CompliancePayload } from '../types'
-import { getClassification, isRegulatedIndustry } from './shared'
+import { getDocumentAnalysis, isRegulatedIndustry } from './shared'
 
 const STUB = 'Compliance not yet implemented (no external retrieval).'
 
@@ -15,7 +15,7 @@ export class ComplianceAgent implements Agent {
   constructor(private readonly logger: Logger) {}
 
   async shouldRun(ctx: AgentContext): Promise<boolean> {
-    const c = getClassification(ctx)
+    const c = getDocumentAnalysis(ctx)
     const sens = c?.regulatorySensitivity ?? 'low'
     // Run only when there is meaningful regulatory exposure — so a simple UX
     // change (low/none) skips it, while fintech/health/etc. trigger it.

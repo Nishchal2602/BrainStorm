@@ -1,5 +1,5 @@
 import type { ModelId } from '@/lib/types'
-import { Classifier } from './classifier'
+import { DocumentAnalyzer } from './analyzer'
 import { ClaudeLlmAdapter, type LlmPort } from './llm'
 import { consoleLogger, type Logger } from './logger'
 import { Orchestrator } from './orchestrator'
@@ -30,14 +30,14 @@ export interface CreateOrchestratorDeps {
   agentTimeoutMs?: number
 }
 
-/** Composition root: wires the LLM adapter, classifier, synthesizer, registry, and all built-in agents. */
+/** Composition root: wires the LLM adapter, analyzer, synthesizer, registry, and all built-in agents. */
 export function createDefaultOrchestrator(deps: CreateOrchestratorDeps): Orchestrator {
   const logger = deps.logger ?? consoleLogger
   const llm = deps.llm ?? new ClaudeLlmAdapter(deps.model, deps.apiKey)
 
   const registry = new AgentRegistry()
   registry
-    .register(new CustomerVoiceAgent(logger))
+    .register(new CustomerVoiceAgent(logger, llm))
     .register(new ResearchAgent(logger))
     .register(new CompetitorIntelligenceAgent(logger))
     .register(new ComplianceAgent(logger))
@@ -46,7 +46,7 @@ export function createDefaultOrchestrator(deps: CreateOrchestratorDeps): Orchest
 
   return new Orchestrator({
     registry,
-    classifier: new Classifier(llm, logger),
+    analyzer: new DocumentAnalyzer(llm, logger),
     synthesizer: new Synthesizer(llm, logger),
     logger,
     agentTimeoutMs: deps.agentTimeoutMs,

@@ -16,21 +16,38 @@ export interface AgentContext {
 
 export type RegulatorySensitivity = 'none' | 'low' | 'medium' | 'high'
 
-/** Output of the orchestrator's Step 1 PRD analysis. */
-export interface Classification {
+/**
+ * Output of the orchestrator's Step 1 — one structured call that both classifies
+ * the document AND extracts the real underlying problem + a search plan. Shared
+ * across agents (Customer Voice now; Competitor/Compliance later) so the document
+ * is analyzed only once.
+ */
+export interface DocumentAnalysis {
+  // Classification
   industry: string
   productCategory: string
   featureCategory: string
   regulatorySensitivity: RegulatorySensitivity
   isNewProduct: boolean
+  // Problem extraction
+  coreProblem: string
+  persona: string
+  synonyms: string[]
+  searchQueries: string[]
+  /** 0..1 — how clearly the document states the problem (low ⇒ the analysis is guessing). */
+  confidence: number
   rationale?: string
 }
+
+export type Sentiment = 'positive' | 'neutral' | 'negative'
 
 export interface Evidence {
   title?: string
   url?: string
   snippet?: string
   sourceType?: string
+  /** The search query that surfaced this evidence (traceability). */
+  discoveredQuery?: string
 }
 
 export type FindingKind =
@@ -67,11 +84,20 @@ export interface AgentResult<TData = unknown> {
   status: AgentStatus
   error?: string
   durationMs?: number
+  /** Tokens this agent spent (real agents that call the LLM; absent for stubs). */
+  usage?: TokenUsage
 }
 
 // --- Per-agent payload shapes (the spec's per-agent outputs) ---
+export interface RecurringPainPoint {
+  title: string
+  frequency: number
+  sentiment: Sentiment
+  /** 0..1 — confidence this is a real recurring pain point (volume × consistency). */
+  confidence: number
+}
 export interface CustomerVoicePayload {
-  recurringPainPoints: string[]
+  recurringPainPoints: RecurringPainPoint[]
   userSegments: string[]
   sentimentSummary: string
   supportingEvidence: Evidence[]
@@ -130,7 +156,7 @@ export interface SynthesisReport {
 
 /** Everything an orchestration run produces. */
 export interface OrchestrationResult {
-  classification: Classification
+  analysis: DocumentAnalysis
   results: AgentResult[]
   report: SynthesisReport
   ranAgentIds: string[]

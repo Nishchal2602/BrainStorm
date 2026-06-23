@@ -1,6 +1,6 @@
 import type { TokenUsage } from '@/lib/types'
 import type { Agent } from './agent'
-import type { Classifier } from './classifier'
+import type { DocumentAnalyzer } from './analyzer'
 import type { Logger } from './logger'
 import type { AgentRegistry } from './registry'
 import { now, TimeoutError, withTimeout } from './runtime'
@@ -9,7 +9,7 @@ import type { AgentContext, AgentResult, OrchestrationResult } from './types'
 
 export interface OrchestratorDeps {
   registry: AgentRegistry
-  classifier: Classifier
+  analyzer: DocumentAnalyzer
   synthesizer: Synthesizer
   logger: Logger
   /** Per-agent time budget (ms). Default 20s. */
@@ -37,17 +37,17 @@ export class Orchestrator {
   constructor(private readonly deps: OrchestratorDeps) {}
 
   async run(context: AgentContext): Promise<OrchestrationResult> {
-    const { registry, classifier, synthesizer, logger } = this.deps
+    const { registry, analyzer, synthesizer, logger } = this.deps
     const timeout = this.deps.agentTimeoutMs ?? DEFAULT_TIMEOUT_MS
 
-    // Step 1 — classify.
-    const { classification, usage: classifyUsage } = await classifier.classify(context)
-    logger.info('classification', classification)
+    // Step 1 — analyze (classify + extract problem/search plan) in one call.
+    const { analysis, usage: analyzeUsage } = await analyzer.analyze(context)
+    logger.info('document analysis', analysis)
     const enriched: AgentContext = {
       ...context,
-      industry: context.industry || classification.industry,
-      productType: context.productType || classification.productCategory,
-      metadata: { ...context.metadata, classification },
+      industry: context.industry || analysis.industry,
+      productType: context.productType || analysis.productCategory,
+      metadata: { ...context.metadata, analysis },
     }
 
     // Step 2 — select (shouldRun, error-isolated).
@@ -62,14 +62,15 @@ export class Orchestrator {
     // Step 3 — run in parallel, each isolated + timed out.
     const results = await Promise.all(toRun.map((a) => this.runAgent(a, enriched, timeout)))
 
-    // Step 4 + 5 — synthesize across findings; total usage = classify + synthesis
-    // (stub agents make no LLM calls).
+    // Step 4 + 5 — synthesize across findings; total usage = analysis + agent
+    // calls (e.g. Customer Voice retrieval) + synthesis.
     const { report, usage: synthUsage } = await synthesizer.synthesize(enriched, results)
-    const usage = addUsage(classifyUsage, synthUsage)
+    const agentUsage = results.reduce<TokenUsage | undefined>((acc, r) => addUsage(acc, r.usage), undefined)
+    const usage = addUsage(addUsage(analyzeUsage, agentUsage), synthUsage)
 
     logger.info('synthesis decision', report.decision)
     return {
-      classification,
+      analysis,
       results,
       report,
       ranAgentIds: toRun.map((a) => a.id),

@@ -302,7 +302,6 @@ async function handleDeepReview(
         timestamp: ts,
         url: ctx.url,
         source,
-        classification: out.classification,
         result: out,
       }),
     )

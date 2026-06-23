@@ -1,6 +1,7 @@
 import type { Section, TokenUsage } from '@/lib/types'
 import type { LlmPort } from './llm'
 import type { Logger } from './logger'
+import { getDocumentAnalysis } from './agents/shared'
 import type {
   AgentContext,
   AgentResult,
@@ -100,13 +101,16 @@ export class Synthesizer {
     results: AgentResult[],
   ): Promise<{ report: SynthesisReport; usage?: TokenUsage }> {
     this.logger.debug('synthesize', { agentResults: results.length })
-    const user = [
-      'PRODUCT DOCUMENT:',
-      ctx.document,
-      '',
-      'AGENT FINDINGS:',
-      serializeResults(results),
-    ].join('\n')
+    const analysis = getDocumentAnalysis(ctx)
+    const parts = ['PRODUCT DOCUMENT:', ctx.document, '']
+    if (analysis) {
+      parts.push(
+        `DOCUMENT-ANALYSIS CONFIDENCE: ${analysis.confidence.toFixed(2)} (how clearly the document stated the problem). If low (≲0.5), the problem is under-specified — prefer "validate_first" and temper your decision confidence accordingly.`,
+        '',
+      )
+    }
+    parts.push('AGENT FINDINGS:', serializeResults(results))
+    const user = parts.join('\n')
 
     const { data, usage } = await this.llm.generateStructured<SynthesisReport>({
       system: SYSTEM,

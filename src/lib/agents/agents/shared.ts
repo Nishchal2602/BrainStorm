@@ -1,9 +1,9 @@
 import type { ReviewContext } from '@/lib/types'
-import type { AgentContext, Classification } from '../types'
+import type { AgentContext, DocumentAnalysis } from '../types'
 
-/** The classifier's output, stashed on the context by the orchestrator. */
-export function getClassification(ctx: AgentContext): Classification | undefined {
-  return ctx.metadata?.classification as Classification | undefined
+/** The shared document analysis (classification + problem), stashed by the orchestrator. */
+export function getDocumentAnalysis(ctx: AgentContext): DocumentAnalysis | undefined {
+  return ctx.metadata?.analysis as DocumentAnalysis | undefined
 }
 
 /** The per-review context (feature/problem/reviewType/…), if provided. */
