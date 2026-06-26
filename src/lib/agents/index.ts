@@ -50,7 +50,7 @@ export function createDefaultOrchestrator(deps: CreateOrchestratorDeps): Orchest
     analyzer: new DocumentAnalyzer(llm, logger),
     synthesizer: new Synthesizer(llm, logger),
     logger,
-    // Real retrieval (Reddit fetch + comments) is slower than a stub; give agents headroom.
-    agentTimeoutMs: deps.agentTimeoutMs ?? 30_000,
+    // Claim validation makes 2 LLM calls + Reddit fetch + comments; give headroom.
+    agentTimeoutMs: deps.agentTimeoutMs ?? 45_000,
   })
 }

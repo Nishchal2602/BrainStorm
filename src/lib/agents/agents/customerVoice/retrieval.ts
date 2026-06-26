@@ -1,7 +1,5 @@
 import type { SourceRef, TokenUsage } from '@/lib/types'
-import type { Sentiment } from '../../types'
 import type { LlmPort } from '../../llm'
-import type { ExtractionResult, ExtractedQuote, ExtractedTheme } from './extract'
 import { parseCustomerVoice } from './parse'
 import type { DiscussionDoc } from './types'
 
@@ -69,30 +67,25 @@ export class GroundedRetrievalService implements RetrievalService {
   }
 }
 
-const SENTIMENT_EMOTION: Record<Sentiment, number> = { negative: 2.5, neutral: 1, positive: 0 }
-
 /**
- * Fallback when Reddit is unavailable: one grounded call → parse its clustered
- * template into DiscussionDoc[] + a synthetic ExtractionResult (no second LLM
- * call). No engagement scores ⇒ the downstream confidence/severity is lower,
- * which correctly reflects the weaker, non-verifiable evidence.
+ * Fallback when Reddit is unavailable: one grounded web-search call → parse its
+ * clustered template into DiscussionDoc[] (no comments, score 0). These feed the
+ * SAME claim-verification path; the absence of engagement caps confidence, which
+ * correctly reflects the weaker, non-verifiable evidence.
  */
 export async function groundedFallback(
   llm: LlmPort,
   queries: string[],
   meta?: { clientId?: string },
-): Promise<{ docs: DiscussionDoc[]; extraction: ExtractionResult; usage?: TokenUsage }> {
+): Promise<{ docs: DiscussionDoc[]; usage?: TokenUsage }> {
   const { text, usage } = await new GroundedRetrievalService(llm).search(queries, { meta })
   const parsed = parseCustomerVoice(text)
 
   const docs: DiscussionDoc[] = []
-  const themes: ExtractedTheme[] = []
   for (const c of parsed.clusters) {
-    const quotes: ExtractedQuote[] = []
     for (const d of c.discussions) {
-      const docIndex = docs.length
       docs.push({
-        id: d.url || `grounded-${docIndex}`,
+        id: d.url || `grounded-${docs.length}`,
         title: d.title,
         subreddit: d.source || 'web',
         score: 0,
@@ -101,14 +94,7 @@ export async function groundedFallback(
         body: d.snippet,
         comments: [],
       })
-      if (d.snippet) quotes.push({ docIndex, quote: d.snippet })
     }
-    themes.push({ name: c.title, emotionScore: SENTIMENT_EMOTION[c.sentiment], quotes })
   }
-
-  return {
-    docs,
-    extraction: { themes, userSegments: parsed.segments, sentimentSummary: parsed.sentimentSummary },
-    usage,
-  }
+  return { docs, usage }
 }

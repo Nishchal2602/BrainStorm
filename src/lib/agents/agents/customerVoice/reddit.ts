@@ -53,6 +53,8 @@ interface RawPost {
   selftext?: string
   url?: string
   over_18?: boolean
+  author?: string
+  author_flair_text?: string
 }
 
 /** Fetch JSON, tolerating any failure (returns null). The service worker can't set
@@ -103,7 +105,16 @@ function toDoc(p: RawPost): DiscussionDoc {
     url: permalink ? `https://www.reddit.com${permalink}` : (p.url ?? ''),
     body: (p.selftext ?? '').slice(0, BODY_CAP),
     comments: [],
+    author: p.author || undefined,
+    authorFlair: p.author_flair_text || undefined,
   }
+}
+
+interface RawComment {
+  body?: string
+  score?: number
+  author?: string
+  author_flair_text?: string
 }
 
 async function fetchTopComments(doc: DiscussionDoc): Promise<RedditComment[]> {
@@ -112,14 +123,18 @@ async function fetchTopComments(doc: DiscussionDoc): Promise<RedditComment[]> {
   const path = doc.url.replace(/^https:\/\/www\.reddit\.com/, '')
   const json = await getJson(`https://www.reddit.com${path}.json?limit=15&sort=top&raw_json=1`)
   if (!Array.isArray(json) || json.length < 2) return []
-  const children = (json[1] as { data?: { children?: Array<{ data?: { body?: string; score?: number } }> } })
-    ?.data?.children
+  const children = (json[1] as { data?: { children?: Array<{ data?: RawComment }> } })?.data?.children
   if (!Array.isArray(children)) return []
   const comments: RedditComment[] = []
   for (const c of children) {
     const body = (c.data?.body ?? '').trim()
     if (!body || body === '[deleted]' || body === '[removed]' || body.length < MIN_COMMENT_LEN) continue
-    comments.push({ body: body.slice(0, COMMENT_CAP), score: c.data?.score ?? 0 })
+    comments.push({
+      body: body.slice(0, COMMENT_CAP),
+      score: c.data?.score ?? 0,
+      author: c.data?.author || undefined,
+      authorFlair: c.data?.author_flair_text || undefined,
+    })
     if (comments.length >= TOP_COMMENTS) break
   }
   return comments
@@ -159,20 +174,24 @@ export async function searchReddit(
     }
   }
 
-  // Relevance gate: score by problem-term overlap, drop zero-match (off-topic)
-  // posts, and rank by relevance first, engagement second — so a viral but
-  // off-topic post no longer outranks a niche relevant one.
+  // Relaxed pre-filter: the LLM verifier is now the precision gate, so only drop
+  // obvious zero-signal noise — keep a post if it shares ≥1 problem term OR comes
+  // from a priority subreddit (topical by community). Rank by relevance first so
+  // comment-fetch targets the most promising posts.
+  const prioritySet = new Set(PRIORITY_SUBS.map((s) => s.toLowerCase()))
   const terms = buildTermSet(relevanceTerms)
   const all = [...byId.values()]
   for (const d of all) d.relevanceScore = relevanceOf(d, terms)
-  const relevant = all.filter((d) => (d.relevanceScore ?? 0) > 0)
+  const relevant = all.filter(
+    (d) => (d.relevanceScore ?? 0) > 0 || prioritySet.has(d.subreddit.toLowerCase()),
+  )
   relevant.sort((a, b) => b.relevanceScore! - a.relevanceScore! || b.score - a.score)
   const docs = relevant.slice(0, POSTS_CAP)
 
   logger?.info('customer_voice: reddit relevance', {
     fetched: all.length,
     kept: docs.length,
-    droppedZeroRelevance: all.length - relevant.length,
+    dropped: all.length - relevant.length,
     topRelevance: docs[0]?.relevanceScore ?? 0,
   })
 

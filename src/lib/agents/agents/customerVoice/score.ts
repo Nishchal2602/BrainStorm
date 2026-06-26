@@ -1,25 +1,30 @@
 import type {
-  CustomerVoiceEvidence,
-  CustomerVoiceRecommendation,
-  CustomerVoiceTheme,
+  AffectedUser,
+  ClaimEvidence,
+  ClaimVerdict,
+  CustomerVoiceClaim,
+  EvidenceLevel,
 } from '../../types'
-import type { ExtractionResult } from './extract'
-import type { DiscussionDoc } from './types'
+import type { Claim } from './claims'
+import type { Judgment } from './verify'
+import type { DiscussionUnit } from './types'
 
 export interface ScoreResult {
-  themes: CustomerVoiceTheme[]
+  claims: CustomerVoiceClaim[]
+  claimsEvaluated: number
   discussionCount: number
   distinctSubreddits: string[]
-  confidence: number
-  confidenceLabel: 'Low' | 'Medium' | 'High'
-  confidenceReason: string
-  recommendation: CustomerVoiceRecommendation
+  overallConfidence: number
+  overallConfidenceLabel: 'Low' | 'Medium' | 'High'
+  evidenceLevel: EvidenceLevel
+  affectedUsers: AffectedUser[]
 }
 
+const clamp = (n: number, lo: number, hi: number): number =>
+  Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : 0))
+const clamp10 = (n: number): number => clamp(n, 0, 10)
 const round1 = (n: number): number => Math.round(n * 10) / 10
-const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n))
 
-/** Normalize for verbatim substring matching (tolerant of quote chars/whitespace). */
 function norm(s: string): string {
   return s
     .toLowerCase()
@@ -28,103 +33,172 @@ function norm(s: string): string {
     .trim()
 }
 
-/** Locate a quote in its cited doc; returns whether it's real + the comment score
- * if it came from a comment (anti-hallucination + evidence strength). */
-function locate(doc: DiscussionDoc, quote: string): { found: boolean; commentScore: number } {
-  const q = norm(quote)
-  if (q.length < 8) return { found: false, commentScore: 0 }
-  // Require the WHOLE quote to be present verbatim (normalized) — anything we
-  // surface as a quote must actually appear in the source. A partial/prefix
-  // match is rejected so a paraphrased tail can never be shown as verbatim.
-  if (norm(doc.title).includes(q) || norm(doc.body).includes(q)) return { found: true, commentScore: 0 }
-  for (const c of doc.comments) {
-    if (norm(c.body).includes(q)) return { found: true, commentScore: c.score }
-  }
-  return { found: false, commentScore: 0 }
+/** engagementScore 0-10 from the unit's own upvotes. */
+function engagementOf(unitScore: number): number {
+  return round1(clamp10(10 * Math.min(1, Math.log10(Math.max(0, unitScore) + 1) / 3)))
 }
 
-function severity(mentions: number, emotion: number, engagement: number): number {
-  const freq = Math.min(4, 1 + Math.log2(mentions + 1))
-  const emo = clamp(emotion, 0, 3)
-  const eng = Math.min(3, Math.log10(engagement + 1))
-  return clamp(round1(freq + emo + eng), 1, 10)
+interface Scored {
+  claimId: string
+  stance: 'supports' | 'contradicts'
+  evidence: ClaimEvidence
+  docIndex: number
+  segment: string
 }
 
-/** Verify quotes, attach real scores, compute per-theme severity + overall confidence. */
-export function scoreThemes(extraction: ExtractionResult, docs: DiscussionDoc[]): ScoreResult {
-  // Merge by normalized name (safety net against duplicate themes).
-  const byName = new Map<string, { name: string; emotion: number; evidence: CustomerVoiceEvidence[] }>()
-  const evidencedDocs = new Set<number>()
+/** Verify each judgment's quote verbatim, attach real scores, compute finalScore, filter. */
+function scoreJudgments(judgments: Judgment[], units: DiscussionUnit[], claims: Claim[]): Scored[] {
+  // Canonical claim ids (case-insensitive) — drop orphan/hallucinated ids so every
+  // surviving row maps to a displayed claim card (keeps Claim→quote→URL traceable and
+  // stops untraceable rows from inflating evidenceLevel/affectedUsers aggregates).
+  const idMap = new Map(claims.map((c) => [c.id.trim().toLowerCase(), c.id]))
+  const out: Scored[] = []
+  for (const j of judgments) {
+    const claimId = idMap.get((j.claimId || '').trim().toLowerCase())
+    if (!claimId) continue // judgment references no real claim → discard
+    const unit = units[j.unitIndex]
+    if (!unit) continue
+    if (j.stance !== 'supports' && j.stance !== 'contradicts') continue // unrelated already dropped upstream
+    const q = norm(j.quote)
+    if (q.length < 8 || !norm(unit.text).includes(q)) continue // verbatim guard — drop fabrications
 
-  for (const theme of extraction.themes) {
-    const key = norm(theme.name)
-    if (!key) continue
-    const entry = byName.get(key) ?? { name: theme.name.trim(), emotion: 0, evidence: [] }
-    entry.emotion = Math.max(entry.emotion, clamp(theme.emotionScore ?? 0, 0, 3))
-    for (const q of theme.quotes) {
-      const doc = docs[q.docIndex]
-      if (!doc) continue
-      const { found, commentScore } = locate(doc, q.quote)
-      if (!found) continue // drop unverifiable quotes — no fabricated evidence
-      evidencedDocs.add(q.docIndex)
-      entry.evidence.push({
-        quote: q.quote.trim(),
-        subreddit: doc.subreddit,
-        url: doc.url,
-        postScore: doc.score,
-        commentScore,
-      })
-    }
-    if (entry.evidence.length) byName.set(key, entry)
-  }
+    const relevanceScore = clamp10(j.relevanceScore)
+    const evidenceStrength = clamp10(j.evidenceStrength)
+    const authorCredibility = clamp10(j.authorCredibility)
+    const engagementScore = engagementOf(unit.score)
+    const finalScore = round1(
+      0.45 * relevanceScore + 0.25 * evidenceStrength + 0.15 * engagementScore + 0.15 * authorCredibility,
+    )
+    // Quality filter — precision over coverage.
+    if (relevanceScore < 7 || finalScore < 6) continue
 
-  const themes: CustomerVoiceTheme[] = [...byName.values()]
-    .map((e) => {
-      const engagement = e.evidence.reduce((s, ev) => s + ev.postScore + ev.commentScore, 0)
-      return {
-        name: e.name,
-        mentions: e.evidence.length,
-        severity: severity(e.evidence.length, e.emotion, engagement),
-        evidence: e.evidence.sort((a, b) => b.commentScore + b.postScore - (a.commentScore + a.postScore)),
-      }
+    out.push({
+      claimId,
+      stance: j.stance,
+      docIndex: unit.docIndex,
+      segment: (j.segment || '').trim(),
+      evidence: {
+        quote: j.quote.trim(),
+        subreddit: unit.subreddit,
+        url: unit.url,
+        postScore: unit.unitId === 'post' ? unit.score : 0,
+        commentScore: unit.unitId === 'post' ? 0 : unit.score,
+        relevanceScore,
+        evidenceStrength,
+        engagementScore,
+        authorCredibility,
+        finalScore,
+      },
     })
-    .sort((a, b) => b.severity - a.severity || b.mentions - a.mentions)
+  }
+  return out
+}
+
+function verdictOf(
+  s: number,
+  c: number,
+  avgFinal: number,
+  topFinal: number,
+  distinctThreads: number,
+): ClaimVerdict {
+  if (s === 0) return 'Unsupported'
+  if (s >= 3 && avgFinal >= 8 && c <= 1 && distinctThreads >= 3) return 'Strongly Supported'
+  if (s >= 2 && topFinal >= 7 && s > c && distinctThreads >= 2) return 'Supported'
+  if (s >= 1 && c >= 1 && Math.abs(s - c) <= 1) return 'Mixed Evidence'
+  if (s === 1 || distinctThreads === 1) return 'Weak Evidence'
+  return 'Supported'
+}
+
+const mean = (ns: number[]): number => (ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : 0)
+
+/** Steps 4–6: group by claim, verbatim-filter, score verdicts (diversity-weighted), evidenceLevel. */
+export function scoreClaims(
+  claims: Claim[],
+  judgments: Judgment[],
+  units: DiscussionUnit[],
+  discussionCount: number,
+): ScoreResult {
+  const scored = scoreJudgments(judgments, units, claims)
+
+  const claimResults: CustomerVoiceClaim[] = claims.map((claim) => {
+    const mine = scored.filter((x) => x.claimId === claim.id)
+    const supporting = mine.filter((x) => x.stance === 'supports').map((x) => x.evidence)
+    const contradicting = mine.filter((x) => x.stance === 'contradicts').map((x) => x.evidence)
+    supporting.sort((a, b) => b.finalScore - a.finalScore)
+    contradicting.sort((a, b) => b.finalScore - a.finalScore)
+
+    const s = supporting.length
+    const c = contradicting.length
+    const supThreads = new Set(mine.filter((x) => x.stance === 'supports').map((x) => x.docIndex))
+    const distinctThreads = supThreads.size
+    const distinctSubs = new Set(supporting.map((e) => e.subreddit)).size
+    const avgFinal = mean(supporting.map((e) => e.finalScore))
+    const topFinal = supporting[0]?.finalScore ?? 0
+
+    const verdict = verdictOf(s, c, avgFinal, topFinal, distinctThreads)
+    const breadthMultiplier = 0.4 + 0.6 * Math.min(1, distinctThreads / 4)
+    const base = 0.5 * (Math.min(s, 4) / 4) + 0.5 * (avgFinal / 10) - Math.min(0.3, 0.15 * c)
+    const confidence = s === 0 ? 0 : Math.round(100 * clamp(base, 0, 1) * breadthMultiplier)
+
+    return {
+      id: claim.id,
+      claim: claim.claim,
+      verdict,
+      confidence,
+      supportingCount: s,
+      contradictingCount: c,
+      sourceBreadth: { distinctThreads, distinctSubreddits: distinctSubs },
+      supporting,
+      contradicting,
+    }
+  })
+
+  // affectedUsers: aggregate author segments across all surviving evidence.
+  const segCounts = new Map<string, number>()
+  for (const x of scored) {
+    const seg = x.segment
+    if (!seg) continue
+    const key = seg.toLowerCase()
+    segCounts.set(key, (segCounts.get(key) ?? 0) + 1)
+  }
+  const labelBySeg = new Map<string, string>()
+  for (const x of scored) if (x.segment) labelBySeg.set(x.segment.toLowerCase(), x.segment)
+  const affectedUsers: AffectedUser[] = [...segCounts.entries()]
+    .map(([k, mentions]) => ({ segment: labelBySeg.get(k) ?? k, mentions }))
+    .sort((a, b) => b.mentions - a.mentions)
+    .slice(0, 8)
 
   const distinctSubreddits = [
-    ...new Set(themes.flatMap((t) => t.evidence.map((e) => e.subreddit)).filter(Boolean)),
+    ...new Set(scored.map((x) => x.evidence.subreddit).filter(Boolean)),
   ]
-  const totalQuotes = themes.reduce((s, t) => s + t.mentions, 0)
-  const topMentions = themes.length ? themes[0].mentions : 0
+  const totalSupporting = scored.filter((x) => x.stance === 'supports').length
+  const supportedClaims = claimResults.filter(
+    (c) => c.verdict === 'Strongly Supported' || c.verdict === 'Supported',
+  ).length
+  const claimsWithSupport = claimResults.filter((c) => c.supportingCount > 0).length
 
-  const volume = Math.min(1, evidencedDocs.size / 20)
-  const diversity = Math.min(1, distinctSubreddits.length / 6)
-  const quality = Math.min(1, totalQuotes / 12)
-  const consistency = totalQuotes ? topMentions / totalQuotes : 0
-  const confidence = themes.length
-    ? Math.round(100 * (0.35 * volume + 0.25 * diversity + 0.2 * quality + 0.2 * consistency))
+  const evidenceLevel: EvidenceLevel =
+    supportedClaims >= 1 || claimsWithSupport >= 2
+      ? 'Strong evidence found'
+      : totalSupporting > 0
+        ? 'Limited evidence found'
+        : 'No evidence found'
+
+  // Overall confidence = mean of evaluated claims' confidence.
+  const overallConfidence = claimResults.length
+    ? Math.round(mean(claimResults.map((c) => c.confidence)))
     : 0
-  const confidenceLabel = confidence >= 75 ? 'High' : confidence >= 50 ? 'Medium' : 'Low'
-  const confidenceReason = themes.length
-    ? `Evidence across ${distinctSubreddits.length} subreddit${distinctSubreddits.length === 1 ? '' : 's'} and ${evidencedDocs.size} discussion${evidencedDocs.size === 1 ? '' : 's'}.`
-    : 'No verifiable customer evidence found.'
-
-  const topSeverity = themes.length ? themes[0].severity : 0
-  const recommendation: CustomerVoiceRecommendation =
-    confidence >= 75 && topSeverity >= 7
-      ? 'Build'
-      : confidence >= 50
-        ? 'Validate First'
-        : confidence >= 30
-          ? 'More Research Needed'
-          : 'Weak Signal'
+  const overallConfidenceLabel =
+    overallConfidence >= 75 ? 'High' : overallConfidence >= 50 ? 'Medium' : 'Low'
 
   return {
-    themes,
-    discussionCount: docs.length,
+    claims: claimResults,
+    claimsEvaluated: claimResults.length,
+    discussionCount,
     distinctSubreddits,
-    confidence,
-    confidenceLabel,
-    confidenceReason,
-    recommendation,
+    overallConfidence,
+    overallConfidenceLabel,
+    evidenceLevel,
+    affectedUsers,
   }
 }

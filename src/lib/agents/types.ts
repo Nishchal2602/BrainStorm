@@ -88,15 +88,19 @@ export interface AgentResult<TData = unknown> {
   usage?: TokenUsage
 }
 
-// --- Per-agent payload shapes (the spec's per-agent outputs) ---
-export type CustomerVoiceRecommendation =
-  | 'Build'
-  | 'Validate First'
-  | 'More Research Needed'
-  | 'Weak Signal'
+// --- Customer Voice: claim-based validation ---
+export type ClaimVerdict =
+  | 'Strongly Supported'
+  | 'Supported'
+  | 'Mixed Evidence'
+  | 'Weak Evidence'
+  | 'Unsupported'
 
-/** One real Reddit quote with its source + engagement strength. */
-export interface CustomerVoiceEvidence {
+/** The PM-facing evidence-level conclusion. NEVER asserts demand is absent. */
+export type EvidenceLevel = 'Strong evidence found' | 'Limited evidence found' | 'No evidence found'
+
+/** One verbatim Reddit quote, verified against its source, with quality sub-scores (0–10). */
+export interface ClaimEvidence {
   quote: string
   subreddit: string
   url: string
@@ -104,28 +108,44 @@ export interface CustomerVoiceEvidence {
   postScore: number
   /** Upvotes on the source comment (0 when the quote is from the post body). */
   commentScore: number
+  relevanceScore: number
+  evidenceStrength: number
+  engagementScore: number
+  authorCredibility: number
+  /** Composite used to rank "strongest" evidence. */
+  finalScore: number
 }
 
-export interface CustomerVoiceTheme {
-  name: string
+export interface CustomerVoiceClaim {
+  id: string
+  claim: string
+  verdict: ClaimVerdict
+  /** 0–100, diversity-weighted. */
+  confidence: number
+  supportingCount: number
+  contradictingCount: number
+  /** Source breadth — how many distinct threads/subreddits the support spans. */
+  sourceBreadth: { distinctThreads: number; distinctSubreddits: number }
+  supporting: ClaimEvidence[]
+  contradicting: ClaimEvidence[]
+}
+
+/** Who is feeling the pain (for ICP validation). */
+export interface AffectedUser {
+  segment: string
   mentions: number
-  /** 1–10 (frequency + emotion + engagement). */
-  severity: number
-  evidence: CustomerVoiceEvidence[]
 }
 
 export interface CustomerVoicePayload {
-  /** 0–100. */
-  confidence: number
-  confidenceLabel: 'Low' | 'Medium' | 'High'
+  claims: CustomerVoiceClaim[]
+  claimsEvaluated: number
   discussionCount: number
-  /** Breadth of the signal — distinct subreddits the evidence spans. */
   distinctSubreddits: string[]
-  themes: CustomerVoiceTheme[]
-  /** Who experiences the problem. */
-  userSegments: string[]
-  sentimentSummary: string
-  recommendation: CustomerVoiceRecommendation
+  /** 0–100. */
+  overallConfidence: number
+  overallConfidenceLabel: 'Low' | 'Medium' | 'High'
+  evidenceLevel: EvidenceLevel
+  affectedUsers: AffectedUser[]
 }
 export interface ResearchPayload {
   supportingEvidence: Evidence[]
