@@ -6,39 +6,29 @@ import { now } from '../../runtime'
 import type { AgentContext, AgentResult, CustomerVoicePayload } from '../../types'
 import { getDocumentAnalysis, getReviewContext } from '../shared'
 import { buildCustomerVoice } from './build'
-import { extractClaims } from './claims'
+import { extractHypotheses } from './hypothesis'
+import { buildAllQueries } from './queries'
 import { searchReddit } from './reddit'
 import { groundedFallback } from './retrieval'
-import { scoreClaims } from './score'
+import { scoreHypotheses } from './score'
 import { buildUnits, verifyEvidence } from './verify'
 
 const MIN_REDDIT_POSTS = 3
-const MAX_QUERIES = 14
+const MAX_QUERIES = 15
 
 const EMPTY: CustomerVoicePayload = {
-  claims: [],
-  claimsEvaluated: 0,
+  hypotheses: [],
+  hypothesesEvaluated: 0,
+  supportedCount: 0,
+  mixedCount: 0,
+  insufficientCount: 0,
+  contradictedCount: 0,
   discussionCount: 0,
   distinctSubreddits: [],
   overallConfidence: 0,
   overallConfidenceLabel: 'Low',
-  evidenceLevel: 'No evidence found',
+  evidenceLevel: 'Insufficient public evidence',
   affectedUsers: [],
-}
-
-function dedupCap(items: string[], cap: number): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const raw of items) {
-    const q = raw.trim()
-    if (q.length < 3) continue
-    const k = q.toLowerCase()
-    if (seen.has(k)) continue
-    seen.add(k)
-    out.push(q)
-    if (out.length >= cap) break
-  }
-  return out
 }
 
 function sumUsage(...parts: (TokenUsage | undefined)[]): TokenUsage | undefined {
@@ -53,10 +43,11 @@ function sumUsage(...parts: (TokenUsage | undefined)[]): TokenUsage | undefined 
 }
 
 /**
- * Customer Voice — claim-based validation. Extract falsifiable claims (+ supporting
- * and contradicting queries) → fetch Reddit (grounding fallback) → verify each
- * comment/post against the claims → quality-score + diversity-weight → per-claim
- * verdicts. Evidence is verbatim and traceable; never asserts demand is absent.
+ * Customer Voice — hypothesis validation engine. Extract the assumptions the product
+ * depends on (+ the customer vernacular for each) → build customer-language queries
+ * → fetch Reddit (grounding fallback) → verify each comment/post with problem/persona/
+ * product relevance → quality-filter + product-form confidence → per-hypothesis verdicts.
+ * Evidence is verbatim and traceable; never asserts demand is absent.
  */
 export class CustomerVoiceAgent implements Agent {
   readonly id = 'customer_voice'
@@ -89,21 +80,23 @@ export class CustomerVoiceAgent implements Agent {
     }
 
     try {
-      const { claims, usage: claimsUsage } = await extractClaims(this.llm, analysis, problem, meta)
-      if (!claims.length) {
-        return { agentId: this.id, summary: 'Could not derive validation claims from the document.', findings: [], confidence: 0, data: EMPTY, status: 'ok', usage: claimsUsage, durationMs: dur() }
+      const { hypotheses, usage: hypUsage } = await extractHypotheses(this.llm, analysis, problem, meta)
+      if (!hypotheses.length) {
+        return { agentId: this.id, summary: 'Could not derive validation hypotheses from the document.', findings: [], confidence: 0, data: EMPTY, status: 'ok', usage: hypUsage, durationMs: dur() }
       }
-      this.logger.info('customer_voice: claims', { count: claims.length, claims: claims.map((c) => c.claim) })
+      this.logger.info('customer_voice: hypotheses', {
+        count: hypotheses.length,
+        statements: hypotheses.map((h) => `${h.category}: ${h.statement}`),
+      })
 
-      const queries = dedupCap(
-        claims.flatMap((c) => [...c.supportingQueries, ...c.contradictingQueries]),
-        MAX_QUERIES,
-      )
+      const queries = buildAllQueries(hypotheses, analysis, MAX_QUERIES)
       const relevanceTerms = [
         analysis?.coreProblem ?? '',
         ...(analysis?.synonyms ?? []),
-        ...claims.map((c) => c.claim),
+        ...hypotheses.map((h) => h.statement),
+        ...hypotheses.flatMap((h) => h.customerLanguage),
       ].filter(Boolean)
+      this.logger.info('customer_voice: queries', { queries })
 
       let docs = await searchReddit(queries, relevanceTerms, this.logger)
       let usedFallback = false
@@ -117,22 +110,24 @@ export class CustomerVoiceAgent implements Agent {
       }
 
       const units = buildUnits(docs)
-      const { judgments, usage: verifyUsage } = await verifyEvidence(this.llm, claims, units, meta)
-      const score = scoreClaims(claims, judgments, units, docs.length)
+      const { judgments, usage: verifyUsage } = await verifyEvidence(this.llm, hypotheses, units, analysis, meta)
+      const score = scoreHypotheses(hypotheses, judgments, units, docs.length)
       const built = buildCustomerVoice(score)
 
       this.logger.info('customer_voice: scored', {
-        claims: score.claimsEvaluated,
+        hypotheses: score.hypothesesEvaluated,
         evidenceLevel: score.evidenceLevel,
         confidence: score.overallConfidence,
+        verdicts: { supported: score.supportedCount, mixed: score.mixedCount, contradicted: score.contradictedCount, insufficient: score.insufficientCount },
         units: units.length,
-        kept: score.claims.reduce((n, c) => n + c.supportingCount + c.contradictingCount, 0),
+        kept: score.hypotheses.reduce((n, h) => n + h.supportingCount + h.contradictingCount, 0),
         fallback: usedFallback,
         durationMs: dur(),
       })
 
+      const n = score.hypothesesEvaluated
       const summary =
-        `Evaluated ${score.claimsEvaluated} claim${score.claimsEvaluated === 1 ? '' : 's'} against ${score.discussionCount} discussion${score.discussionCount === 1 ? '' : 's'}: ${score.evidenceLevel} (confidence ${score.overallConfidence}/100). ` +
+        `Evaluated ${n} hypothes${n === 1 ? 'is' : 'es'} against ${score.discussionCount} discussion${score.discussionCount === 1 ? '' : 's'}: ${score.evidenceLevel} (overall confidence ${score.overallConfidence}/100). ` +
         'Absence of public evidence is not evidence of absent demand.'
 
       return {
@@ -142,7 +137,7 @@ export class CustomerVoiceAgent implements Agent {
         confidence: built.confidence,
         data: built.payload,
         status: 'ok',
-        usage: sumUsage(claimsUsage, fbUsage, verifyUsage),
+        usage: sumUsage(hypUsage, fbUsage, verifyUsage),
         durationMs: dur(),
       }
     } catch (e) {

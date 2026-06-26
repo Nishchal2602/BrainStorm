@@ -1,4 +1,4 @@
-import type { ClaimEvidence, CustomerVoicePayload, Evidence, Finding } from '../../types'
+import type { CustomerVoicePayload, Evidence, Finding, HypothesisEvidence } from '../../types'
 import type { ScoreResult } from './score'
 
 export interface BuildOutput {
@@ -11,16 +11,20 @@ export interface BuildOutput {
 const clamp01 = (n: number): number => Math.min(1, Math.max(0, n))
 
 /** Map CV evidence to the shared Evidence shape the synthesis findings consume. */
-function toEvidence(e: ClaimEvidence): Evidence {
+function toEvidence(e: HypothesisEvidence): Evidence {
   return { snippet: e.quote, url: e.url, sourceType: e.subreddit ? `r/${e.subreddit}` : 'reddit' }
 }
 
-/** Assemble the claims payload + synthesis findings. Findings speak only about
+/** Assemble the hypotheses payload + synthesis findings. Findings speak only about
  * *evidence* (verdicts/counts), never about whether demand exists. */
 export function buildCustomerVoice(score: ScoreResult): BuildOutput {
   const payload: CustomerVoicePayload = {
-    claims: score.claims,
-    claimsEvaluated: score.claimsEvaluated,
+    hypotheses: score.hypotheses,
+    hypothesesEvaluated: score.hypothesesEvaluated,
+    supportedCount: score.supportedCount,
+    mixedCount: score.mixedCount,
+    insufficientCount: score.insufficientCount,
+    contradictedCount: score.contradictedCount,
     discussionCount: score.discussionCount,
     distinctSubreddits: score.distinctSubreddits,
     overallConfidence: score.overallConfidence,
@@ -29,36 +33,39 @@ export function buildCustomerVoice(score: ScoreResult): BuildOutput {
     affectedUsers: score.affectedUsers,
   }
 
-  const findings: Finding[] = score.claims.map((c) => {
-    const s = c.supportingCount
-    const ct = c.contradictingCount
-    const noEvidence = s === 0 && ct === 0
-    // kind tracks the actual evidence balance — absence/weak/mixed support is NOT
-    // contradiction, so it is never tagged 'contradict' for the synthesizer. 'contradict'
-    // is reserved for claims where located evidence genuinely outweighs support.
-    const kind: Finding['kind'] = s > ct ? 'support' : ct > s ? 'contradict' : 'insight'
-    const detail = noEvidence
-      ? 'No public evidence located for this claim — this reflects discussion availability, not contradiction. Validate directly with target users.'
-      : `Verdict: ${c.verdict} (confidence ${c.confidence}/100). ` +
+  const findings: Finding[] = score.hypotheses.map((h) => {
+    const s = h.supportingCount
+    const ct = h.contradictingCount
+    const insufficient = h.verdict === 'insufficient_evidence'
+    // kind tracks the evidence balance — absence/insufficient is NEVER tagged
+    // 'contradict' (that would launder absence into evidence of absence).
+    const kind: Finding['kind'] = insufficient
+      ? 'insight'
+      : s > ct
+        ? 'support'
+        : ct > s
+          ? 'contradict'
+          : 'insight'
+    const detail = insufficient
+      ? 'Insufficient public evidence — reflects discussion availability, not contradiction. Validate directly with target users.'
+      : `Verdict: ${h.verdict} (confidence ${h.confidence}/100). ` +
         `${s} supporting vs ${ct} contradicting discussion(s) ` +
-        `across ${c.sourceBreadth.distinctThreads} thread(s).` +
+        `across ${h.sourceBreadth.distinctThreads} thread(s).` +
         (ct > 0 ? ' Contradicting evidence present.' : '')
-    // severity = strength of the *located* signal. Absence of evidence is low, never
-    // high — it must not read to the decision engine as a strong negative signal.
-    const severity: Finding['severity'] = noEvidence
+    const severity: Finding['severity'] = insufficient
       ? 'low'
-      : c.verdict === 'Strongly Supported'
-        ? 'high'
-        : c.verdict === 'Supported' || c.verdict === 'Mixed Evidence' || ct > s
-          ? 'medium'
-          : 'low'
+      : h.verdict === 'supported'
+        ? h.confidence >= 70
+          ? 'high'
+          : 'medium'
+        : 'medium' // mixed / contradicted
     return {
-      title: c.claim,
+      title: h.statement,
       detail,
       kind,
       severity,
-      confidence: clamp01(c.confidence / 100),
-      evidence: [...c.supporting, ...c.contradicting].slice(0, 3).map(toEvidence),
+      confidence: clamp01(h.confidence / 100),
+      evidence: [...h.supporting, ...h.contradicting].slice(0, 3).map(toEvidence),
     }
   })
 

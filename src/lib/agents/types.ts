@@ -88,46 +88,60 @@ export interface AgentResult<TData = unknown> {
   usage?: TokenUsage
 }
 
-// --- Customer Voice: claim-based validation ---
-export type ClaimVerdict =
-  | 'Strongly Supported'
-  | 'Supported'
-  | 'Mixed Evidence'
-  | 'Weak Evidence'
-  | 'Unsupported'
+// --- Customer Voice: hypothesis validation engine ---
+/** The category of product assumption a hypothesis tests. */
+export type HypothesisCategory = 'problem' | 'persona' | 'workflow' | 'solution' | 'market'
+
+/** Per-hypothesis verdict. `insufficient_evidence` = "not enough public discussion to
+ * validate" — NEVER "the assumption is false". */
+export type HypothesisVerdict = 'supported' | 'mixed' | 'insufficient_evidence' | 'contradicted'
 
 /** The PM-facing evidence-level conclusion. NEVER asserts demand is absent. */
-export type EvidenceLevel = 'Strong evidence found' | 'Limited evidence found' | 'No evidence found'
+export type EvidenceLevel =
+  | 'Strong evidence found'
+  | 'Limited evidence found'
+  | 'Insufficient public evidence'
 
 /** One verbatim Reddit quote, verified against its source, with quality sub-scores (0–10). */
-export interface ClaimEvidence {
+export interface HypothesisEvidence {
   quote: string
   subreddit: string
   url: string
+  /** Reddit author (for distinct-author diversity); undefined when unknown. */
+  author?: string
   /** Upvotes on the source post. */
   postScore: number
   /** Upvotes on the source comment (0 when the quote is from the post body). */
   commentScore: number
-  relevanceScore: number
+  /** How directly the unit speaks to the hypothesis's problem. */
+  problemMatch: number
+  /** How well the author matches the target persona. */
+  personaMatch: number
+  /** Same product/domain as the hypothesis (guards cross-domain merges). */
+  productMatch: number
   evidenceStrength: number
   engagementScore: number
   authorCredibility: number
-  /** Composite used to rank "strongest" evidence. */
+  /** Composite used to rank "strongest" evidence + drive confidence. */
   finalScore: number
 }
 
-export interface CustomerVoiceClaim {
+export interface CustomerVoiceHypothesis {
   id: string
-  claim: string
-  verdict: ClaimVerdict
-  /** 0–100, diversity-weighted. */
+  /** The assumption under test, in plain language. */
+  statement: string
+  category: HypothesisCategory
+  verdict: HypothesisVerdict
+  /** 0–100 = Quality × Diversity × Agreement × Relevance. */
   confidence: number
+  /** Average-final-score band over supporting evidence. */
+  evidenceQuality: 'High' | 'Medium' | 'Low'
   supportingCount: number
   contradictingCount: number
-  /** Source breadth — how many distinct threads/subreddits the support spans. */
-  sourceBreadth: { distinctThreads: number; distinctSubreddits: number }
-  supporting: ClaimEvidence[]
-  contradicting: ClaimEvidence[]
+  /** Source breadth — distinct threads / subreddits / authors the support spans. */
+  sourceBreadth: { distinctThreads: number; distinctSubreddits: number; distinctAuthors: number }
+  supporting: HypothesisEvidence[]
+  contradicting: HypothesisEvidence[]
 }
 
 /** Who is feeling the pain (for ICP validation). */
@@ -137,8 +151,12 @@ export interface AffectedUser {
 }
 
 export interface CustomerVoicePayload {
-  claims: CustomerVoiceClaim[]
-  claimsEvaluated: number
+  hypotheses: CustomerVoiceHypothesis[]
+  hypothesesEvaluated: number
+  supportedCount: number
+  mixedCount: number
+  insufficientCount: number
+  contradictedCount: number
   discussionCount: number
   distinctSubreddits: string[]
   /** 0–100. */

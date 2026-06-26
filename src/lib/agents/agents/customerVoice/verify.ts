@@ -1,6 +1,7 @@
 import type { TokenUsage } from '@/lib/types'
+import type { DocumentAnalysis } from '../../types'
 import type { LlmPort } from '../../llm'
-import type { Claim } from './claims'
+import type { Hypothesis } from './hypothesis'
 import type { DiscussionDoc, DiscussionUnit } from './types'
 
 const MAX_UNITS = 40
@@ -46,10 +47,15 @@ export type Stance = 'supports' | 'contradicts' | 'unrelated'
 
 export interface Judgment {
   unitIndex: number
-  claimId: string
+  hypothesisId: string
   stance: Stance
   quote: string
-  relevanceScore: number
+  /** How directly the unit speaks to THIS hypothesis's problem (0-10). */
+  problemMatch: number
+  /** How well the author matches the target persona (0-10). */
+  personaMatch: number
+  /** Same product/domain as the hypothesis (0-10) — guards cross-domain merges. */
+  productMatch: number
   evidenceStrength: number
   authorCredibility: number
   segment: string
@@ -66,10 +72,12 @@ const SCHEMA = {
         type: 'object',
         properties: {
           unitIndex: { type: 'number' },
-          claimId: { type: 'string' },
+          hypothesisId: { type: 'string' },
           stance: { type: 'string', enum: ['supports', 'contradicts', 'unrelated'] },
           quote: { type: 'string' },
-          relevanceScore: { type: 'number' },
+          problemMatch: { type: 'number' },
+          personaMatch: { type: 'number' },
+          productMatch: { type: 'number' },
           evidenceStrength: { type: 'number' },
           authorCredibility: { type: 'number' },
           segment: { type: 'string' },
@@ -77,10 +85,12 @@ const SCHEMA = {
         },
         required: [
           'unitIndex',
-          'claimId',
+          'hypothesisId',
           'stance',
           'quote',
-          'relevanceScore',
+          'problemMatch',
+          'personaMatch',
+          'productMatch',
           'evidenceStrength',
           'authorCredibility',
           'segment',
@@ -92,15 +102,20 @@ const SCHEMA = {
   required: ['judgments'],
 } as const
 
-const SYSTEM = `You validate specific claims against individual Reddit units (each unit is one post or one comment). For EACH unit, decide which ONE claim (by id) it most directly addresses, then judge it.
+function systemPrompt(persona: string, domain: string): string {
+  return `You validate specific hypotheses against individual Reddit units (each unit is one post or one comment). For EACH unit, decide which ONE hypothesis (by id) it most directly addresses, then judge it.
 
-- stance: "supports" (the unit is evidence the claim is TRUE), "contradicts" (evidence it is FALSE / the person does NOT have the problem), or "unrelated" (off-topic, or merely same domain). Same industry/topic is NOT relevance.
-- quote: copy a VERBATIM substring from THAT unit's text (exact characters) — never paraphrase or invent. If no verbatim sentence genuinely fits the claim, mark the unit "unrelated".
-- relevanceScore 0-10: how directly the unit speaks to the SPECIFIC claim.
+${persona ? `Target persona: ${persona}\n` : ''}${domain ? `Product domain: ${domain}\n` : ''}
+- stance: "supports" (the unit is evidence the hypothesis is TRUE), "contradicts" (evidence it is FALSE / the person does NOT have the problem), or "unrelated" (off-topic, or merely same broad topic). Same industry/topic is NOT relevance.
+- quote: copy a VERBATIM substring from THAT unit's text (exact characters) — never paraphrase or invent. If no verbatim sentence genuinely fits, mark the unit "unrelated".
+- problemMatch 0-10: how directly the unit describes the SPECIFIC problem in the hypothesis (not just the same area).
+- personaMatch 0-10: how well the author looks like the target persona/role above (use flair/role signals; ~5 if unknown, lower if clearly a different audience).
+- productMatch 0-10: whether it concerns the SAME product/domain above. A different domain (e.g. crypto onboarding vs bank onboarding vs university onboarding) scores LOW even if the wording is similar.
 - evidenceStrength 0-10: first-hand, specific lived experience (high) vs vague/second-hand (low).
 - authorCredibility 0-10: from the author's flair/role signals (practitioner/engineer/PM/founder/manager). ~5 if unknown.
 - segment: the author's role/segment if evident (e.g. "Software Engineer", "Product Manager", "Founder", "Marketer"); else "".
 You MAY omit units that are clearly unrelated. Be strict: precision over coverage.`
+}
 
 function renderUnits(units: DiscussionUnit[]): string {
   return units
@@ -111,22 +126,25 @@ function renderUnits(units: DiscussionUnit[]): string {
     .join('\n\n')
 }
 
-/** Step 3: comment-level verification — one structured call over all units × claims. */
+/** Step 4: comment-level verification with multi-dimensional relevance —
+ * one structured call over all units × hypotheses. */
 export async function verifyEvidence(
   llm: LlmPort,
-  claims: Claim[],
+  hypotheses: Hypothesis[],
   units: DiscussionUnit[],
+  analysis?: DocumentAnalysis,
   meta?: { clientId?: string },
 ): Promise<{ judgments: Judgment[]; usage?: TokenUsage }> {
-  if (!claims.length || !units.length) return { judgments: [] }
-  const claimList = claims.map((c) => `${c.id}: ${c.claim}`).join('\n')
-  const user = `CLAIMS:\n${claimList}\n\nUNITS:\n${renderUnits(units)}`
+  if (!hypotheses.length || !units.length) return { judgments: [] }
+  const list = hypotheses.map((h) => `${h.id}: ${h.statement}`).join('\n')
+  const domain = [analysis?.productCategory, analysis?.industry].filter(Boolean).join(' · ')
+  const user = `HYPOTHESES:\n${list}\n\nUNITS:\n${renderUnits(units)}`
 
   const { data, usage } = await llm.generateStructured<{ judgments: Judgment[] }>({
-    system: SYSTEM,
+    system: systemPrompt(analysis?.persona ?? '', domain),
     user,
     schema: SCHEMA as object,
-    maxTokens: 3500,
+    maxTokens: 3800,
     label: 'customer_voice_verify',
     meta,
   })

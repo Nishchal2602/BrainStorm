@@ -70,7 +70,7 @@ Reason ACROSS the findings — do not merely concatenate them. Resolve tension b
 - "validate_first": the core problem or demand is unproven; run cheap validation before committing.
 - "do_not_build": evidence is weak/contradicting or risk outweighs value.
 
-Customer Voice rule: a customer-voice "no evidence found" / "Unsupported" finding means relevant public discussion was not located — it is NOT evidence that demand is absent. Treat missing evidence as a reason to validate_first, never as contradicting evidence or grounds for do_not_build. Only findings that report actual contradicting discussions count against demand.
+Customer Voice rule: a customer-voice "insufficient public evidence" / "no evidence found" finding means relevant public discussion was not located — it is NOT evidence that demand is absent. Treat missing evidence as a reason to validate_first, never as contradicting evidence or grounds for do_not_build. Only findings that report actual contradicting discussions count against demand.
 
 Set decision.confidence in [0,1] reflecting how strong the evidence is (low when agents returned little). decision.rationale = the 2–5 reasons that drove the call. Be specific to THIS document; never invent evidence not present in the inputs. Keep every list concise and decision-relevant.`
 
