@@ -69,7 +69,7 @@ export function buildRunRecord(args: {
       confidence: result.report.decision.confidence,
     },
     risks: clean(result.report.risks),
-    competitors: clean(competitor?.competitors),
+    competitors: clean(competitor?.landscape?.competitors?.map((c) => c.name)),
     painPoints: clean(voice?.hypotheses?.map((h) => h.statement)),
     missingRequirements: clean(result.report.missingRequirements),
     recommendations: clean(result.report.decision.rationale),

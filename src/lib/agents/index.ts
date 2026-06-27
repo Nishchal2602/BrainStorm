@@ -20,6 +20,7 @@ export { AgentRegistry } from './registry'
 export { Orchestrator } from './orchestrator'
 export { reportToSections } from './synthesis'
 export { customerVoiceSections } from './agents/customerVoice/sections'
+export { competitorSections } from './agents/competitor/sections'
 
 export interface CreateOrchestratorDeps {
   /** Active model (Gemini in practice; ignored when a Gemini/proxy key is set). */
@@ -40,7 +41,7 @@ export function createDefaultOrchestrator(deps: CreateOrchestratorDeps): Orchest
   registry
     .register(new CustomerVoiceAgent(logger, llm))
     .register(new ResearchAgent(logger))
-    .register(new CompetitorIntelligenceAgent(logger))
+    .register(new CompetitorIntelligenceAgent(logger, llm))
     .register(new ComplianceAgent(logger))
     .register(new SolutionCriticAgent(logger))
     .register(new PrdQualityAgent(logger))

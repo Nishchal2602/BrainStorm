@@ -16,6 +16,7 @@ import { createClaudeClient } from '@/lib/claude/client'
 import { config } from '@/lib/config'
 import { extractFromPage } from '@/content/extract'
 import {
+  competitorSections,
   createDefaultOrchestrator,
   customerVoiceSections,
   reportToSections,
@@ -289,8 +290,12 @@ async function handleDeepReview(
     })
   }
 
-  // Synthesis decision first, then the real customer-evidence cards (quotes + links).
-  const sections = [...reportToSections(out.report), ...customerVoiceSections(out.results)]
+  // Synthesis decision first, then the real customer-evidence + competitor cards (quotes + links).
+  const sections = [
+    ...reportToSections(out.report),
+    ...customerVoiceSections(out.results),
+    ...competitorSections(out.results),
+  ]
   const result: ResultDoc = {
     feature: 'pm_review',
     title: 'Deep Intelligence',

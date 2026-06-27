@@ -34,6 +34,10 @@ export interface DocumentAnalysis {
   persona: string
   synonyms: string[]
   searchQueries: string[]
+  /** The kind of solution proposed (e.g. "Enterprise AI Assistant"). Used for competitor discovery. */
+  solutionCategory: string
+  /** Concrete capabilities the proposal depends on (e.g. "RAG", "role awareness"). */
+  keyCapabilities: string[]
   /** 0..1 — how clearly the document states the problem (low ⇒ the analysis is guessing). */
   confidence: number
   rationale?: string
@@ -170,10 +174,69 @@ export interface ResearchPayload {
   contradictingEvidence: Evidence[]
   confidenceScore: number
 }
-export interface CompetitorPayload {
+// --- Competitor Intelligence: jobs-to-be-done market landscape ---
+export type CompetitorRelationship = 'direct' | 'indirect' | 'adjacent'
+/** How saturated a capability is across the market (derived from adoption). */
+export type Maturity = 'very_emerging' | 'emerging' | 'maturing' | 'mature' | 'very_mature'
+/** A capability's standing vs the proposal + market. */
+export type GapStatus = 'Unique' | 'Rare' | 'Common' | 'Commodity' | 'Missing'
+
+/** Where a claimed capability was sourced (URL + short quote). Model-grounded, not re-fetched. */
+export interface CapabilityEvidence {
+  url?: string
+  quote?: string
+}
+export interface CompetitorCapability {
+  name: string
+  evidence: CapabilityEvidence
+}
+export interface Competitor {
+  name: string
+  url: string
+  positioning: string
+  relationship: CompetitorRelationship
+  /** 0–100; competitors below the threshold are dropped (anti-hallucination). */
+  confidence: number
+  /** How this product addresses the core customer job. */
+  jobApproach?: string
+  targetCustomer?: string
+  capabilities: CompetitorCapability[]
+  strengths: string[]
+  weaknesses: string[]
+}
+/** A customer job-to-be-done and how each competitor solves it (implementations vary). */
+export interface CustomerJob {
+  job: string
+  approaches: { competitor: string; approach: string }[]
+}
+/** One capability rolled up across the kept competitors. */
+export interface CapabilityCell {
+  name: string
+  /** How many competitors offer it. */
+  adoption: number
   competitors: string[]
-  featureComparison: string[]
-  gaps: string[]
+  maturity: Maturity
+  status: GapStatus
+}
+export interface LandscapeSignal {
+  kind: 'incomplete_landscape' | 'crowded' | 'sparse'
+  message: string
+}
+/** Reusable market view (Competitors · Capabilities · Jobs · Signals · Evidence). */
+export interface MarketLandscape {
+  jobs: CustomerJob[]
+  competitors: Competitor[]
+  capabilities: CapabilityCell[]
+  signals: LandscapeSignal[]
+}
+export interface CompetitorPayload {
+  landscape: MarketLandscape
+  productCategory: string
+  competitorsFound: number
+  /** 0–100 = 0.35·Novelty + 0.30·Coverage + 0.20·Saturation + 0.15·MissingStandards. */
+  differentiationScore: number
+  differentiation: 'Low' | 'Medium' | 'High'
+  scoreFactors: { novelty: number; coverage: number; saturation: number; missingStandards: number }
 }
 export interface CompliancePayload {
   regulations: string[]

@@ -16,6 +16,8 @@ const SCHEMA = {
     persona: { type: 'string' },
     synonyms: { type: 'array', items: { type: 'string' } },
     searchQueries: { type: 'array', items: { type: 'string' } },
+    solutionCategory: { type: 'string' },
+    keyCapabilities: { type: 'array', items: { type: 'string' } },
     confidence: { type: 'number' },
     rationale: { type: 'string' },
   },
@@ -29,6 +31,8 @@ const SCHEMA = {
     'persona',
     'synonyms',
     'searchQueries',
+    'solutionCategory',
+    'keyCapabilities',
     'confidence',
     'rationale',
   ],
@@ -48,6 +52,8 @@ Problem extraction (look past the document's wording to the REAL user problem):
 - persona: the primary affected user.
 - synonyms: 3–6 alternative phrasings real users would use (e.g. "KYC delay", "verification friction", "signup abandonment").
 - searchQueries: 4–6 concrete web-search queries to find real user discussions of this problem (favor terms users actually type).
+- solutionCategory: the kind of solution the document proposes (e.g. "Enterprise AI Assistant", "Payments Onboarding"). "Unknown" if unclear.
+- keyCapabilities: 4–8 concrete capabilities the proposed solution depends on (e.g. "RAG", "knowledge graph", "role awareness", "enterprise search"). Capabilities, not benefits.
 - confidence: 0..1 — how clearly the document states the problem. High (~0.9) when explicit and specific; low (~0.4) when vague (e.g. just "improve onboarding"). Be honest when you are guessing.
 - rationale: one sentence.`
 
@@ -61,6 +67,8 @@ const DEFAULT: DocumentAnalysis = {
   persona: '',
   synonyms: [],
   searchQueries: [],
+  solutionCategory: 'Unknown',
+  keyCapabilities: [],
   confidence: 0,
   rationale: 'Document analysis unavailable; used safe defaults.',
 }
@@ -106,6 +114,7 @@ export class DocumentAnalyzer {
         regulatorySensitivity: sens,
         synonyms: strArr(data.synonyms),
         searchQueries: strArr(data.searchQueries),
+        keyCapabilities: strArr(data.keyCapabilities),
         confidence: clamp01(data.confidence),
       }
       return { analysis, usage }
