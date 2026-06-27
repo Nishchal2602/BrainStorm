@@ -7,7 +7,7 @@ const MAX_QUERIES = 8
 const MAX_USES = 8
 const MAX_TOKENS = 6000
 
-/** Raw, pre-normalization shapes parsed from the grounded template. */
+/** Raw, pre-normalization shapes parsed from the grounded facts template (call 1). */
 export interface RawCapability {
   name: string
   url?: string
@@ -16,18 +16,17 @@ export interface RawCapability {
 export interface RawCompetitor {
   name: string
   url?: string
-  relationship?: string
-  match?: number
+  category?: string
+  primaryJob?: string
   positioning?: string
-  jobApproach?: string
+  architecture?: string
   targetCustomer?: string
-  pricing?: string
+  match?: number
   strengths: string[]
   weaknesses: string[]
   capabilities: RawCapability[]
 }
 export interface RawLandscape {
-  jobs: string[]
   competitors: RawCompetitor[]
 }
 
@@ -37,7 +36,7 @@ const UNKNOWN = (s: string | undefined): boolean => !s || s.trim().toLowerCase()
 /**
  * Problem-first queries (#1): describe the customer problem/job, NOT the tech
  * capabilities — so we find products that solve the same job differently, not just
- * products with matching technology. Capabilities are compared AFTER discovery.
+ * products with matching technology.
  */
 export function buildProblemQueries(analysis: DocumentAnalysis | undefined): string[] {
   const a = analysis
@@ -68,21 +67,20 @@ export function buildProblemQueries(analysis: DocumentAnalysis | undefined): str
   return deduped
 }
 
-const SYSTEM = `You are a product manager doing competitive research with web search. Identify who already solves the SAME CUSTOMER JOB as the product described, using ONLY real results from your web search — never invent products, URLs, capabilities, or quotes.
+const SYSTEM = `You are a product manager doing competitive research with web search. Find the real products that solve the SAME CUSTOMER JOB as the product described, using ONLY real results from your web search — never invent products, URLs, capabilities, or quotes.
 
-First state the core customer job(s) in plain language. Then list real products that address that job — DIRECT (same job, same approach), INDIRECT (same job, different/broader approach), and ADJACENT (related space). Output STRICT plain text in EXACTLY this format, nothing else:
+Understand each competitor as Job → Positioning → Architecture → Capabilities (NOT capabilities first). Output STRICT plain text in EXACTLY this format, nothing else:
 
-## JOB: <core customer job in plain language>
 ## COMPETITOR: <product name>
-URL: <real product url> | RELATIONSHIP: direct|indirect|adjacent | MATCH: <0-100 how sure this is a real product for this job> | TARGET: <customer> | PRICING: <if obvious, else ->
-POSITIONING: <one line> | JOB_APPROACH: <how it solves the job>
+URL: <real product url> | CATEGORY: <market category, e.g. Enterprise Search, Enterprise AI Assistant, Workflow Automation> | PRIMARY_JOB: <the main job customers hire it for — never just "AI"> | TARGET: <customer> | MATCH: <0-100 how sure this is a real product for this job>
+POSITIONING: <one sentence on how it positions itself> | ARCHITECTURE: <one sentence on how it fundamentally works, e.g. "RAG over enterprise knowledge", "knowledge graph", "workflow automation", "agent orchestration">
 STRENGTHS: <comma-separated> | WEAKNESSES: <comma-separated>
-CAP: <capability name> | URL: <real url documenting it> | QUOTE: <short verbatim phrase from that page>
-CAP: <capability name> | URL: <real url> | QUOTE: <short verbatim phrase>
+CAP: <real product capability> | URL: <real url documenting it> | QUOTE: <short verbatim phrase from that page>
+CAP: ...
 ## COMPETITOR: <next product>
 ...
 
-Rules: at most ~10 competitors, at most 5 CAP lines each. Every CAP must have a real URL and a short verbatim QUOTE — omit any capability you cannot ground. If you cannot find real competitors, output exactly: NO COMPETITORS FOUND.`
+Rules: at most ~10 competitors, at most 5 CAP lines each. CAP must be a real product capability with a real URL and verbatim QUOTE — NEVER a marketing slogan ("best for X", "trusted by", "enterprise-ready", "fast"). Omit any capability you cannot ground. If you cannot find real competitors, output exactly: NO COMPETITORS FOUND.`
 
 /** One " | "-delimited line → { LABEL: value } map (labels are fixed uppercase tokens). */
 function fields(line: string): Record<string, string> {
@@ -101,7 +99,6 @@ const splitList = (s: string | undefined): string[] =>
     .filter((x) => x && x !== '-')
 
 function parseCapLine(line: string): RawCapability | null {
-  // QUOTE is last + free-text — capture it wholesale, parse labels from the head.
   const qm = line.match(/(?:^|\s\|\s)QUOTE:\s*([\s\S]*)$/i)
   const quote = qm ? clean(qm[1]).replace(/^["'“”]+|["'“”]+$/g, '') : undefined
   const head = qm ? line.slice(0, qm.index) : line
@@ -111,12 +108,10 @@ function parseCapLine(line: string): RawCapability | null {
   return { name, url: f.URL || undefined, quote: quote || undefined }
 }
 
-/** Pure parser for the grounded landscape template. Tolerant of missing sections. */
+/** Pure parser for the grounded facts template. Tolerant of missing fields. */
 export function parseLandscape(raw: string): RawLandscape {
-  const empty: RawLandscape = { jobs: [], competitors: [] }
-  if (!raw || /no competitors found/i.test(raw)) return empty
+  if (!raw || /no competitors found/i.test(raw)) return { competitors: [] }
 
-  const jobs: string[] = []
   const competitors: RawCompetitor[] = []
   let cur: RawCompetitor | null = null
   const flush = () => {
@@ -128,21 +123,10 @@ export function parseLandscape(raw: string): RawLandscape {
     const line = cleanBullet(rawLine).trim()
     if (!line) continue
 
-    const job = line.match(/^##\s*JOB:\s*(.*)$/i)
-    if (job) {
-      const j = clean(job[1])
-      if (j) jobs.push(j)
-      continue
-    }
     const comp = line.match(/^##\s*COMPETITOR:\s*(.*)$/i)
     if (comp) {
       flush()
-      cur = {
-        name: clean(comp[1]),
-        strengths: [],
-        weaknesses: [],
-        capabilities: [],
-      }
+      cur = { name: clean(comp[1]), strengths: [], weaknesses: [], capabilities: [] }
       continue
     }
     if (!cur) continue
@@ -154,30 +138,30 @@ export function parseLandscape(raw: string): RawLandscape {
     }
     const f = fields(line)
     if (f.URL && !cur.url) cur.url = f.URL
-    if (f.RELATIONSHIP) cur.relationship = f.RELATIONSHIP.toLowerCase()
+    if (f.CATEGORY) cur.category = f.CATEGORY
+    if (f.PRIMARY_JOB) cur.primaryJob = f.PRIMARY_JOB
+    if (f.TARGET && f.TARGET !== '-') cur.targetCustomer = f.TARGET
     if (f.MATCH) {
       const n = Number(f.MATCH.replace(/[^0-9.]/g, ''))
       if (Number.isFinite(n)) cur.match = n
     }
-    if (f.TARGET && f.TARGET !== '-') cur.targetCustomer = f.TARGET
-    if (f.PRICING && f.PRICING !== '-') cur.pricing = f.PRICING
     if (f.POSITIONING) cur.positioning = f.POSITIONING
-    if (f.JOB_APPROACH) cur.jobApproach = f.JOB_APPROACH
+    if (f.ARCHITECTURE) cur.architecture = f.ARCHITECTURE
     if (f.STRENGTHS) cur.strengths = splitList(f.STRENGTHS)
     if (f.WEAKNESSES) cur.weaknesses = splitList(f.WEAKNESSES)
   }
   flush()
 
-  return { jobs, competitors }
+  return { competitors }
 }
 
-/** Step 2: one grounded web-search call → parsed raw landscape (+ sources/usage). */
+/** Step 1: one grounded web-search call → parsed raw competitor facts (+ sources/usage). */
 export async function discoverLandscape(
   llm: LlmPort,
   queries: string[],
   meta?: { clientId?: string },
 ): Promise<{ raw: RawLandscape; sources: SourceRef[]; usage?: TokenUsage }> {
-  if (!queries.length) return { raw: { jobs: [], competitors: [] }, sources: [] }
+  if (!queries.length) return { raw: { competitors: [] }, sources: [] }
   const user = `Find products that solve the same customer job behind these searches:\n${queries.map((q) => `- ${q}`).join('\n')}`
   const { text, sources, usage } = await llm.generateText({
     system: SYSTEM,

@@ -1,83 +1,36 @@
-import type { CapabilityCell, Competitor, DocumentAnalysis, LandscapeSignal } from '../../types'
-import { normalizeCapability } from './extraction'
+import type { Competitor, DifferentiationScores, DocumentAnalysis, LandscapeSignal } from '../../types'
 
 /** Direct-competitor count at which the market reads as saturated. */
 const SAT_FULL = 6
 
-const clamp01 = (n: number): number => Math.min(1, Math.max(0, Number.isFinite(n) ? n : 0))
+const clamp = (n: number, lo: number, hi: number): number =>
+  Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : 0))
+const s100 = (n: number): number => clamp(n, 0, 100)
 
 export interface DifferentiationResult {
   differentiationScore: number
   differentiation: 'Low' | 'Medium' | 'High'
-  scoreFactors: { novelty: number; coverage: number; saturation: number; missingStandards: number }
 }
 
-/** Rarity of a planned capability in the market (1 = nobody has it). */
-function rarityWeight(adoption: number, frac: number): number {
-  if (adoption === 0) return 1
-  if (adoption <= 2) return 0.6
-  if (frac < 0.5) return 0.35
-  return 0.1
-}
-
-/** Step 5 (PURE): Differentiation = 0.35·Novelty + 0.30·Coverage + 0.20·Saturation + 0.15·MissingStandards (#9). */
-export function scoreDifferentiation(
-  planned: string[],
-  cells: CapabilityCell[],
-  competitors: Competitor[],
-): DifferentiationResult {
-  const zero = { novelty: 0, coverage: 0, saturation: 0, missingStandards: 0 }
-  // Can't assess differentiation without a mapped market — never reads as "highly differentiated".
-  if (!competitors.length) return { differentiationScore: 0, differentiation: 'Low', scoreFactors: zero }
-
-  const competitorCount = competitors.length
-  const plannedSet = new Set(planned.map((p) => normalizeCapability(p).toLowerCase()))
-  const byName = new Map(cells.map((c) => [c.name.toLowerCase(), c]))
-
-  // Novelty: how rare the planned capabilities are across the market.
-  const plannedCells = [...plannedSet]
-    .map((k) => byName.get(k))
-    .filter((c): c is CapabilityCell => !!c)
-  const novelty = plannedCells.length
-    ? plannedCells.reduce((s, c) => s + rarityWeight(c.adoption, c.adoption / competitorCount), 0) /
-      plannedCells.length
-    : 0
-
-  // Coverage: breadth — how much of what the market offers the proposal also covers.
-  const marketCaps = cells.filter((c) => c.adoption > 0)
-  const plannedInMarket = marketCaps.filter((c) => plannedSet.has(c.name.toLowerCase()))
-  const coverage = marketCaps.length ? plannedInMarket.length / marketCaps.length : 0
-
-  // MissingStandards: of the table-stakes capabilities (offered by most), how many are covered.
-  const standards = marketCaps.filter((c) => c.adoption / competitorCount >= 0.5)
-  const missing = standards.filter((c) => !plannedSet.has(c.name.toLowerCase())).length
-  const missingStandards = standards.length ? 1 - missing / standards.length : 1
-
-  // Saturation: fewer DIRECT competitors ⇒ more room to differentiate.
-  const directCount = competitors.filter((c) => c.relationship === 'direct').length
-  const saturation = 1 - Math.min(1, directCount / SAT_FULL)
-
-  const factors = {
-    novelty: clamp01(novelty),
-    coverage: clamp01(coverage),
-    saturation: clamp01(saturation),
-    missingStandards: clamp01(missingStandards),
-  }
-  const score = Math.round(
-    100 *
-      (0.35 * factors.novelty +
-        0.3 * factors.coverage +
-        0.2 * factors.saturation +
-        0.15 * factors.missingStandards),
+/** Step 5 (PURE): apply fixed weights to the LLM's four sub-scores. Positioning +
+ * architecture dominate, so feature overlap can't alone drive the result (#6/#9). */
+export function weightDifferentiation(scores: DifferentiationScores): DifferentiationResult {
+  const positioning = s100(scores.positioningDifferentiation)
+  const architecture = s100(scores.architectureNovelty)
+  const capability = s100(scores.capabilityDifferentiation)
+  const overlap = s100(scores.marketOverlap)
+  const differentiationScore = Math.round(
+    0.3 * positioning + 0.3 * architecture + 0.2 * capability + 0.2 * (100 - overlap),
   )
-  const differentiation = score >= 70 ? 'High' : score >= 40 ? 'Medium' : 'Low'
-  return { differentiationScore: score, differentiation, scoreFactors: factors }
+  const differentiation =
+    differentiationScore >= 70 ? 'High' : differentiationScore >= 40 ? 'Medium' : 'Low'
+  return { differentiationScore, differentiation }
 }
 
-// Well-known players by category — a sanity check that grounding didn't miss the obvious (#8).
+// Well-known players by category — a sanity check that grounding didn't miss the obvious.
 const KNOWN_PLAYERS: { match: RegExp; players: string[] }[] = [
   { match: /enterprise search|workplace search/i, players: ['Glean', 'Guru', 'Elastic'] },
-  { match: /enterprise ai|company context|internal knowledge|workplace assistant|knowledge management/i, players: ['Glean', 'Guru', 'Microsoft Copilot', 'Notion AI'] },
+  { match: /enterprise ai|company context|internal knowledge|workplace assistant|knowledge management/i, players: ['Glean', 'Moveworks', 'Microsoft Copilot', 'Notion AI'] },
   { match: /ai cod|code (assistant|completion)|developer tool/i, players: ['Cursor', 'GitHub Copilot'] },
   { match: /\bcrm\b|customer relationship/i, players: ['Salesforce', 'HubSpot'] },
   { match: /project management|issue track/i, players: ['Jira', 'Linear', 'Asana'] },
@@ -100,11 +53,20 @@ export function landscapeSignals(
         message: `Expected players (${entry.players.join(', ')}) were not found — the landscape may be incomplete; verify directly.`,
       })
     }
-    break // only the first matching category
+    break
   }
   const direct = competitors.filter((c) => c.relationship === 'direct').length
   if (direct >= SAT_FULL) {
     signals.push({ kind: 'crowded', message: `${direct} direct competitors — this is a crowded market.` })
   }
   return signals
+}
+
+/** Suggested adjacent categories for the zero-competitor case (never "no competition"). */
+export function adjacentCategorySuggestions(analysis: DocumentAnalysis | undefined): string[] {
+  const hay = `${analysis?.productCategory ?? ''} ${analysis?.solutionCategory ?? ''}`.toLowerCase()
+  for (const entry of KNOWN_PLAYERS) {
+    if (entry.match.test(hay)) return entry.players
+  }
+  return []
 }

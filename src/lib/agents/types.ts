@@ -174,8 +174,10 @@ export interface ResearchPayload {
   contradictingEvidence: Evidence[]
   confidenceScore: number
 }
-// --- Competitor Intelligence: jobs-to-be-done market landscape ---
-export type CompetitorRelationship = 'direct' | 'indirect' | 'adjacent'
+// --- Competitor Intelligence: market positioning & white-space reasoning ---
+/** How a product relates to THIS proposal — keeps adjacent products/substitutes from
+ * reading as head-on competitors. */
+export type CompetitorRelationship = 'direct' | 'adjacent' | 'substitute'
 /** How saturated a capability is across the market (derived from adoption). */
 export type Maturity = 'very_emerging' | 'emerging' | 'maturing' | 'mature' | 'very_mature'
 /** A capability's standing vs the proposal + market. */
@@ -193,23 +195,48 @@ export interface CompetitorCapability {
 export interface Competitor {
   name: string
   url: string
+  /** Market category (e.g. "Enterprise Search", "Enterprise AI Assistant"). */
+  category: string
+  /** The main job customers buy it for (never just "AI"). */
+  primaryJob: string
+  /** One sentence on how it positions itself. */
   positioning: string
-  relationship: CompetitorRelationship
+  /** One sentence on how it fundamentally works (e.g. "RAG over enterprise knowledge"). */
+  architecture: string
+  targetCustomer?: string
   /** 0–100; competitors below the threshold are dropped (anti-hallucination). */
   confidence: number
-  /** How this product addresses the core customer job. */
-  jobApproach?: string
-  targetCustomer?: string
+  relationship: CompetitorRelationship
+  relationshipReason?: string
   capabilities: CompetitorCapability[]
   strengths: string[]
   weaknesses: string[]
 }
-/** A customer job-to-be-done and how each competitor solves it (implementations vary). */
-export interface CustomerJob {
-  job: string
-  approaches: { competitor: string; approach: string }[]
+/** A market cluster of competitors by job/category. */
+export interface MarketSegment {
+  name: string
+  competitors: string[]
 }
-/** One capability rolled up across the kept competitors. */
+/** A strategic gap — justified by the ABSENCE of this positioning among discovered competitors. */
+export interface StrategicWhiteSpace {
+  opportunity: string
+  rationale?: string
+}
+/** The model's read of the proposal itself, for positioning comparison. */
+export interface ProposalProfile {
+  category: string
+  primaryJob: string
+  architecture: string
+  positioning: string
+}
+/** Four independent 0–100 differentiation dimensions (positioning + architecture weighted most). */
+export interface DifferentiationScores {
+  marketOverlap: number
+  architectureNovelty: number
+  capabilityDifferentiation: number
+  positioningDifferentiation: number
+}
+/** One capability rolled up across the kept competitors (secondary view). */
 export interface CapabilityCell {
   name: string
   /** How many competitors offer it. */
@@ -222,21 +249,27 @@ export interface LandscapeSignal {
   kind: 'incomplete_landscape' | 'crowded' | 'sparse'
   message: string
 }
-/** Reusable market view (Competitors · Capabilities · Jobs · Signals · Evidence). */
+/** Reusable market view (Proposal · Competitors · Segments · Capabilities · White space · Signals). */
 export interface MarketLandscape {
-  jobs: CustomerJob[]
+  proposal: ProposalProfile
+  category: string
+  maturity: 'Low' | 'Medium' | 'High'
   competitors: Competitor[]
+  segments: MarketSegment[]
   capabilities: CapabilityCell[]
+  whiteSpace: StrategicWhiteSpace[]
   signals: LandscapeSignal[]
 }
 export interface CompetitorPayload {
   landscape: MarketLandscape
   productCategory: string
   competitorsFound: number
-  /** 0–100 = 0.35·Novelty + 0.30·Coverage + 0.20·Saturation + 0.15·MissingStandards. */
+  /** 0–100 = 0.30·Positioning + 0.30·Architecture + 0.20·Capability + 0.20·(100−MarketOverlap). */
   differentiationScore: number
   differentiation: 'Low' | 'Medium' | 'High'
-  scoreFactors: { novelty: number; coverage: number; saturation: number; missingStandards: number }
+  differentiationScores: DifferentiationScores
+  /** Strategy-consultant narrative. */
+  recommendation: string
 }
 export interface CompliancePayload {
   regulations: string[]

@@ -1,30 +1,21 @@
 import type { Confidence, Section, SectionTone } from '@/lib/types'
-import type {
-  AgentResult,
-  CapabilityCell,
-  Competitor,
-  CompetitorPayload,
-  CompetitorRelationship,
-} from '../../types'
+import type { AgentResult, Competitor, CompetitorPayload, CompetitorRelationship } from '../../types'
 
-const pct = (n: number): number => Math.round(n * 100)
 const confBand = (n: number): Confidence => (n >= 70 ? 'High' : n >= 40 ? 'Medium' : 'Low')
-const maturityLabel = (m: string): string => m.replace(/_/g, ' ')
 
 const REL_GROUPS: { rel: CompetitorRelationship; heading: string; tone: SectionTone }[] = [
   { rel: 'direct', heading: 'Direct competitors', tone: 'risk' },
-  { rel: 'indirect', heading: 'Indirect competitors', tone: 'insight' },
-  { rel: 'adjacent', heading: 'Adjacent products', tone: 'default' },
+  { rel: 'adjacent', heading: 'Adjacent products', tone: 'insight' },
+  { rel: 'substitute', heading: 'Substitutes', tone: 'default' },
 ]
 
-const competitorLine = (c: Competitor): string =>
-  `${c.name} (${c.confidence}%) — ${c.positioning || c.jobApproach || '—'}${c.url ? ` ${c.url}` : ''}`.trim()
+const positioningLine = (c: Competitor): string => {
+  const head = `${c.name} (${c.confidence}%) — ${c.primaryJob || c.category}${c.architecture && c.architecture !== 'Unknown' ? ` · ${c.architecture}` : ''}`
+  return c.relationshipReason ? `${head} — ${c.relationshipReason}` : head
+}
 
-const capCell = (cell: CapabilityCell, total: number): string =>
-  `${cell.name} — ${cell.adoption}/${total} · ${maturityLabel(cell.maturity)} · ${cell.status}`
-
-/** Render the competitive landscape as research cards: who solves the job, capability
- * comparison, white space, and differentiation. Reuses Section/Card; [] for non-ok/absent. */
+/** Render the competitive landscape as a PM analysis: landscape, segments, positioning,
+ * strategic white space, differentiation. Reuses Section/Card; [] for non-ok/absent. */
 export function competitorSections(results: AgentResult[]): Section[] {
   const result = results.find((r) => r.agentId === 'competitor')
   if (!result || result.status !== 'ok') return []
@@ -36,8 +27,8 @@ export function competitorSections(results: AgentResult[]): Section[] {
   if (!land.competitors.length) {
     return [
       {
-        heading: 'Competitor Landscape',
-        body: 'Could not map the competitive landscape — no competitors located. This reflects search coverage, not an absence of competition; validate the market directly.',
+        heading: 'Market Landscape',
+        body: p.recommendation || 'No competitors identified from available evidence — validate the market directly.',
         tone: 'unknown',
         evidenceType: 'Competitor',
       },
@@ -47,73 +38,62 @@ export function competitorSections(results: AgentResult[]): Section[] {
   const sections: Section[] = []
   const total = p.competitorsFound
 
+  // Market Landscape headline.
   sections.push({
-    heading: `Competitor Landscape — ${total} competitor${total === 1 ? '' : 's'}`,
-    body: `${p.productCategory} · ${p.differentiation} differentiation (${p.differentiationScore}/100)`,
+    heading: `Market Landscape — ${total} competitor${total === 1 ? '' : 's'}`,
+    body: `${land.category || p.productCategory} · Maturity ${land.maturity} · ${p.differentiation} differentiation (${p.differentiationScore}/100)`,
+    bullets: land.competitors.slice(0, 6).map((c) => `${c.name} — ${c.category}`),
     tone: 'insight',
     evidenceType: 'Competitor',
     confidence: confBand(p.differentiationScore),
   })
 
-  // Competitors grouped Direct / Indirect / Adjacent (#6).
-  for (const g of REL_GROUPS) {
-    const group = land.competitors.filter((c) => c.relationship === g.rel)
-    if (!group.length) continue
+  // Market Segments.
+  if (land.segments.length) {
     sections.push({
-      heading: g.heading,
-      bullets: group.slice(0, 6).map(competitorLine),
-      tone: g.tone,
-      evidenceType: 'Competitor',
-    })
-  }
-
-  // Jobs-to-be-done (#10) — same job, different implementations.
-  const primaryJob = land.jobs.find((j) => j.approaches.length)
-  if (primaryJob) {
-    sections.push({
-      heading: `Job: ${primaryJob.job}`,
-      bullets: primaryJob.approaches.slice(0, 6).map((a) => `${a.competitor} — ${a.approach}`),
+      heading: 'Market segments',
+      bullets: land.segments
+        .filter((s) => s.competitors.length)
+        .map((s) => `${s.name} — ${s.competitors.join(', ')}`),
       tone: 'default',
       evidenceType: 'Competitor',
     })
   }
 
-  // Capability comparison (adoption + maturity + evidence URLs).
-  const byName = new Map(land.competitors.map((c) => [c.name.toLowerCase(), c]))
-  if (land.capabilities.length) {
+  // Competitor Positioning, grouped Direct / Adjacent / Substitute.
+  for (const g of REL_GROUPS) {
+    const group = land.competitors.filter((c) => c.relationship === g.rel)
+    if (!group.length) continue
     sections.push({
-      heading: 'Capability comparison',
-      bullets: land.capabilities.slice(0, 10).map((cell) => {
-        const owner = byName.get((cell.competitors[0] ?? '').toLowerCase())
-        const cap = owner?.capabilities.find((c) => c.name.toLowerCase() === cell.name.toLowerCase())
-        const url = cap?.evidence.url
-        return `${capCell(cell, total)}${url ? ` — ${url}` : ''}`
-      }),
+      heading: g.heading,
+      bullets: group.slice(0, 6).map(positioningLine),
+      tone: g.tone,
+      evidenceType: 'Competitor',
+    })
+  }
+
+  // Strategic White Space (absence-justified).
+  if (land.whiteSpace.length) {
+    sections.push({
+      heading: 'Strategic white space',
+      bullets: land.whiteSpace
+        .slice(0, 6)
+        .map((w) => (w.rationale ? `${w.opportunity} — ${w.rationale}` : w.opportunity)),
       tone: 'insight',
       evidenceType: 'Competitor',
     })
   }
 
-  // White space — differentiators (Unique/Rare) and gaps (Missing).
-  const diff = land.capabilities.filter((c) => c.status === 'Unique' || c.status === 'Rare')
-  const missing = land.capabilities.filter((c) => c.status === 'Missing')
-  if (diff.length || missing.length) {
-    const bullets: string[] = []
-    for (const c of diff.slice(0, 5)) bullets.push(`Differentiator — ${c.name} (${c.status}, in ${c.adoption}/${total})`)
-    for (const c of missing.slice(0, 5)) bullets.push(`Missing — ${c.name} (in ${c.adoption}/${total} competitors, absent from proposal)`)
-    sections.push({ heading: 'White space', bullets, tone: 'insight', evidenceType: 'Competitor' })
-  }
-
-  // Differentiation breakdown.
-  const sf = p.scoreFactors
+  // Differentiation Assessment — narrative + the four sub-scores.
+  const sf = p.differentiationScores
   sections.push({
-    heading: `${p.differentiation} differentiation`,
-    body: `Score ${p.differentiationScore}/100 — Novelty ${pct(sf.novelty)}% · Coverage ${pct(sf.coverage)}% · Saturation room ${pct(sf.saturation)}% · Standards covered ${pct(sf.missingStandards)}%`,
+    heading: `Differentiation assessment — ${p.differentiation}`,
+    body: `${p.recommendation}\nPositioning ${sf.positioningDifferentiation} · Architecture ${sf.architectureNovelty} · Capability ${sf.capabilityDifferentiation} · Market overlap ${sf.marketOverlap} → ${p.differentiationScore}/100`,
     tone: 'recommendation',
     confidence: confBand(p.differentiationScore),
   })
 
-  // Caveats (incomplete landscape / crowded) (#8).
+  // Caveats.
   for (const s of land.signals) {
     sections.push({
       heading: s.kind === 'crowded' ? 'Crowded market' : 'Possible incomplete landscape',
