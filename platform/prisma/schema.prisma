@@ -1,0 +1,478 @@
+// Pocket PM Platform — schema from the product data dictionary.
+// Conventions: UUID PKs, snake_case columns (@map), Json for flexible fields,
+// Decimal for scores/confidence. User references (owner_id/author_id/etc.) are
+// plain UUID columns (no Prisma relation) to avoid a forest of back-relations on User;
+// membership is resolved via ProductMember queries.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ----------------------------- Enums -----------------------------
+enum ProductPhase {
+  Idea
+  Discovery
+  Validation
+  Build
+  Beta
+  GA
+  Growth
+  Maintenance
+  Sunset
+}
+
+enum ProductStatus {
+  Active
+  Paused
+  Archived
+}
+
+enum MemberRole {
+  Owner
+  Admin
+  Editor
+  Viewer
+} // dictionary "Enum" (values not specified) — flagged default set
+
+enum MemberStatus {
+  Invited
+  Active
+  Removed
+} // flagged
+
+enum FeatureStage {
+  Ideation
+  Discovery
+  Validation
+  Design
+  Development
+  Testing
+  Released
+}
+
+enum FeatureStatus {
+  Active
+  Blocked
+  Paused
+  Archived
+}
+
+enum FeatureCategory {
+  Feature
+  Improvement
+  BugFix
+  Platform
+  Other
+} // flagged
+
+enum Priority {
+  P0
+  P1
+  P2
+  P3
+}
+
+enum PrdSource {
+  Upload
+  Manual
+  Generated
+} // flagged
+
+enum PrdStatus {
+  Draft
+  Submitted
+  Reviewed
+  Superseded
+} // reconciled to owner lifecycle
+
+enum ReviewTrigger {
+  Manual
+  PRDUpload
+  Scheduled
+  EvidenceUpdate
+  CompetitorUpdate
+} // dictionary labels had spaces; identifiers are PascalCase
+
+enum ReviewRecommendation {
+  Build
+  BuildWithChanges
+  ValidateFirst
+  DoNotBuild
+}
+
+enum ReviewStatus {
+  Pending
+  Running
+  Completed
+  Failed
+}
+
+enum FindingType {
+  Risk
+  Opportunity
+  Insight
+  Recommendation
+  Question
+  Assumption
+}
+
+enum FindingSeverity {
+  Low
+  Medium
+  High
+  Critical
+}
+
+enum EvidenceVerdict {
+  Supported
+  Mixed
+  Weak
+  Contradicted
+  NoEvidence
+}
+
+enum DecisionStatus {
+  Draft
+  Proposed
+  Approved
+  Rejected
+  Superseded
+} // reconciled to owner lifecycle (adds Draft)
+
+enum DecisionEvidenceSourceType {
+  ReviewRun
+  Finding
+  CustomerEvidence
+  CompetitorSnapshot
+  File
+  PRD
+} // flagged
+
+enum ThreatLevel {
+  Low
+  Medium
+  High
+} // dictionary "Enum" (unspecified) — flagged
+
+enum AgentType {
+  CustomerVoice
+  Competitor
+  Research
+  Compliance
+  SolutionCritic
+  PrdQuality
+  Synthesis
+} // dictionary "Enum" (unspecified) — flagged
+
+enum TimelineEntityType {
+  Product
+  Feature
+  PRD
+  ReviewRun
+  Decision
+  File
+} // flagged
+
+// ----------------------------- Auth -----------------------------
+// Added (not in the dictionary): the dictionary references user ids everywhere
+// (owner_id/author_id/uploaded_by/actor_id/approved_by/invited_by/user_id) but
+// defines no Users table. Credentials + JWT sessions ⇒ no Auth.js adapter tables.
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+// ----------------------------- 1. Products -----------------------------
+model Product {
+  id               String        @id @default(uuid()) @map("product_id") @db.Uuid
+  name             String
+  slug             String        @unique
+  summary          String?
+  vision           String?
+  problemStatement String?       @map("problem_statement")
+  targetPersona    String?       @map("target_persona")
+  ownerId          String        @map("owner_id") @db.Uuid
+  phase            ProductPhase  @default(Idea)
+  status           ProductStatus @default(Active)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  archivedAt       DateTime?     @map("archived_at")
+  metadata         Json?
+
+  members     ProductMember[]
+  features    Feature[]
+  prds        PRD[]
+  reviewRuns  ReviewRun[]
+  competitors Competitor[]
+  decisions   Decision[]
+  files       File[]
+  timeline    TimelineEvent[]
+
+  @@map("products")
+}
+
+// ----------------------------- 2. Product Members -----------------------------
+model ProductMember {
+  id          String       @id @default(uuid()) @map("member_id") @db.Uuid
+  productId   String       @map("product_id") @db.Uuid
+  userId      String       @map("user_id") @db.Uuid
+  role        MemberRole   @default(Viewer)
+  permissions Json?
+  status      MemberStatus @default(Active)
+  invitedBy   String?      @map("invited_by") @db.Uuid
+  joinedAt    DateTime     @default(now()) @map("joined_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, userId])
+  @@map("product_members")
+}
+
+// ----------------------------- 3. Features -----------------------------
+model Feature {
+  id               String          @id @default(uuid()) @map("feature_id") @db.Uuid
+  productId        String          @map("product_id") @db.Uuid
+  name             String
+  summary          String?
+  problemStatement String?         @map("problem_statement")
+  proposedSolution String?         @map("proposed_solution")
+  ownerId          String?         @map("owner_id") @db.Uuid
+  priority         Priority        @default(P2)
+  stage            FeatureStage    @default(Ideation)
+  status           FeatureStatus   @default(Active)
+  category         FeatureCategory @default(Feature)
+  successMetric    String?         @map("success_metric")
+  targetRelease    String?         @map("target_release")
+  currentPrdId     String?         @unique @map("current_prd_id") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  prds       PRD[]       @relation("FeaturePrds")
+  currentPrd PRD?        @relation("FeatureCurrentPrd", fields: [currentPrdId], references: [id])
+  reviewRuns ReviewRun[]
+  decisions  Decision[]
+
+  @@map("features")
+}
+
+// ----------------------------- 4. PRDs -----------------------------
+model PRD {
+  id             String    @id @default(uuid()) @map("prd_id") @db.Uuid
+  featureId      String    @map("feature_id") @db.Uuid
+  productId      String    @map("product_id") @db.Uuid
+  version        Int       @default(1)
+  title          String
+  summary        String?
+  authorId       String?   @map("author_id") @db.Uuid
+  source         PrdSource @default(Upload)
+  documentFileId String?   @map("document_file_id") @db.Uuid
+  status         PrdStatus @default(Draft)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  feature          Feature    @relation("FeaturePrds", fields: [featureId], references: [id], onDelete: Cascade)
+  product          Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  currentOfFeature Feature?   @relation("FeatureCurrentPrd")
+  documentFile     File?      @relation("PrdDocument", fields: [documentFileId], references: [id])
+  reviewRuns       ReviewRun[]
+
+  @@map("prds")
+}
+
+// ----------------------------- 5. Review Runs -----------------------------
+model ReviewRun {
+  id             String                @id @default(uuid()) @map("review_run_id") @db.Uuid
+  featureId      String?               @map("feature_id") @db.Uuid
+  productId      String                @map("product_id") @db.Uuid
+  prdId          String?               @map("prd_id") @db.Uuid
+  trigger        ReviewTrigger         @default(Manual)
+  reviewVersion  String?               @map("review_version")
+  status         ReviewStatus          @default(Pending)
+  overallScore   Decimal?              @map("overall_score") @db.Decimal(5, 2)
+  recommendation ReviewRecommendation?
+  confidence     Decimal?              @db.Decimal(5, 4)
+  startedAt      DateTime?             @map("started_at")
+  completedAt    DateTime?             @map("completed_at")
+
+  product             Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  feature             Feature?             @relation(fields: [featureId], references: [id])
+  prd                 PRD?                 @relation(fields: [prdId], references: [id])
+  pmReview            PMReview?
+  customerEvidence    CustomerEvidence[]
+  competitorSnapshots CompetitorSnapshot[]
+  findings            Finding[]
+  decisions           Decision[]
+
+  @@map("review_runs")
+}
+
+// ----------------------------- 6. PM Review (models only) -----------------------------
+model PMReview {
+  id                   String  @id @default(uuid()) @map("pm_review_id") @db.Uuid
+  reviewRunId          String  @unique @map("review_run_id") @db.Uuid
+  summary              String?
+  risks                Json?
+  missingRequirements  Json?   @map("missing_requirements")
+  openQuestions        Json?   @map("open_questions")
+  rolloutRisks         Json?   @map("rollout_risks")
+  suggestedExperiments Json?   @map("suggested_experiments")
+
+  reviewRun ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@map("pm_reviews")
+}
+
+// ----------------------------- 7. Customer Evidence (models only) -----------------------------
+model CustomerEvidence {
+  id                  String          @id @default(uuid()) @map("evidence_id") @db.Uuid
+  reviewRunId         String          @map("review_run_id") @db.Uuid
+  claim               String
+  verdict             EvidenceVerdict
+  confidence          Decimal?        @db.Decimal(5, 4)
+  supportingCount     Int             @default(0) @map("supporting_count")
+  contradictingCount  Int             @default(0) @map("contradicting_count")
+  sources             Json?
+  supportingQuotes    Json?           @map("supporting_quotes")
+  contradictingQuotes Json?           @map("contradicting_quotes")
+
+  reviewRun ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@map("customer_evidence")
+}
+
+// ----------------------------- 8. Competitors (models only) -----------------------------
+model Competitor {
+  id          String   @id @default(uuid()) @map("competitor_id") @db.Uuid
+  productId   String   @map("product_id") @db.Uuid
+  name        String
+  website     String?
+  category    String?
+  positioning String?
+  confidence  Decimal? @db.Decimal(5, 4)
+  firstSeen   DateTime @default(now()) @map("first_seen")
+  lastSeen    DateTime @default(now()) @map("last_seen")
+
+  product   Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  snapshots CompetitorSnapshot[]
+
+  @@map("competitors")
+}
+
+// ----------------------------- 9. Competitor Snapshots (models only) -----------------------------
+model CompetitorSnapshot {
+  id                   String       @id @default(uuid()) @map("snapshot_id") @db.Uuid
+  reviewRunId          String       @map("review_run_id") @db.Uuid
+  competitorId         String       @map("competitor_id") @db.Uuid
+  capabilities         Json?
+  strengths            Json?
+  weaknesses           Json?
+  differentiationScore Decimal?     @map("differentiation_score") @db.Decimal(5, 2)
+  threatLevel          ThreatLevel? @map("threat_level")
+
+  reviewRun  ReviewRun  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  competitor Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@map("competitor_snapshots")
+}
+
+// ----------------------------- 10. Findings (models only) -----------------------------
+model Finding {
+  id          String          @id @default(uuid()) @map("finding_id") @db.Uuid
+  reviewRunId String          @map("review_run_id") @db.Uuid
+  agent       AgentType
+  type        FindingType
+  severity    FindingSeverity
+  title       String
+  description String?
+  evidence    Json?
+  confidence  Decimal?        @db.Decimal(5, 4)
+
+  reviewRun ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@map("findings")
+}
+
+// ----------------------------- 11. Decisions -----------------------------
+model Decision {
+  id          String         @id @default(uuid()) @map("decision_id") @db.Uuid
+  productId   String         @map("product_id") @db.Uuid
+  featureId   String?        @map("feature_id") @db.Uuid
+  reviewRunId String?        @map("review_run_id") @db.Uuid // nullable: decisions can exist without a run
+  title       String
+  decision    String
+  rationale   String?
+  confidence  Decimal?       @db.Decimal(5, 4)
+  status      DecisionStatus @default(Proposed)
+  ownerId     String?        @map("owner_id") @db.Uuid
+  approvedBy  String?        @map("approved_by") @db.Uuid
+  approvedAt  DateTime?      @map("approved_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  product   Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  feature   Feature?           @relation(fields: [featureId], references: [id])
+  reviewRun ReviewRun?         @relation(fields: [reviewRunId], references: [id])
+  evidence  DecisionEvidence[]
+
+  @@map("decisions")
+}
+
+// ----------------------------- 12. Decision Evidence (models only) -----------------------------
+model DecisionEvidence {
+  id         String                     @id @default(uuid()) @map("evidence_id") @db.Uuid
+  decisionId String                     @map("decision_id") @db.Uuid
+  sourceType DecisionEvidenceSourceType @map("source_type")
+  sourceId   String                     @map("source_id") @db.Uuid
+  weight     Decimal?                   @db.Decimal(5, 4)
+  summary    String?
+
+  decision Decision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+
+  @@map("decision_evidence")
+}
+
+// ----------------------------- 13. Files -----------------------------
+model File {
+  id          String   @id @default(uuid()) @map("file_id") @db.Uuid
+  productId   String   @map("product_id") @db.Uuid
+  featureId   String?  @map("feature_id") @db.Uuid
+  reviewRunId String?  @map("review_run_id") @db.Uuid
+  uploadedBy  String?  @map("uploaded_by") @db.Uuid
+  fileName    String   @map("file_name")
+  mimeType    String   @map("mime_type")
+  storagePath String   @map("storage_path")
+  version     Int      @default(1)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  product      Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  prdDocuments PRD[]   @relation("PrdDocument")
+
+  @@map("files")
+}
+
+// ----------------------------- 14. Timeline -----------------------------
+model TimelineEvent {
+  id         String             @id @default(uuid()) @map("event_id") @db.Uuid
+  productId  String             @map("product_id") @db.Uuid
+  entityType TimelineEntityType @map("entity_type")
+  entityId   String             @map("entity_id") @db.Uuid
+  eventType  String             @map("event_type")
+  actorId    String?            @map("actor_id") @db.Uuid
+  metadata   Json?
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+  @@map("timeline")
+}

@@ -1,0 +1,16 @@
+# Optional: run Postgres via Docker instead of the embedded one (`npm run db`).
+# Matches DATABASE_URL in .env.example (host port 54329).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pocketpm
+      POSTGRES_PASSWORD: pocketpm
+      POSTGRES_DB: pocketpm
+    ports:
+      - '54329:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
