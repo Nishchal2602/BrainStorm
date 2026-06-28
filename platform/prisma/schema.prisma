@@ -160,6 +160,8 @@ enum ThreatLevel {
 } // dictionary "Enum" (unspecified) — flagged
 
 enum AgentType {
+  SharedAnalysis
+  PMReview
   CustomerVoice
   Competitor
   Research
@@ -304,6 +306,10 @@ model ReviewRun {
   confidence     Decimal?              @db.Decimal(5, 4)
   startedAt      DateTime?             @map("started_at")
   completedAt    DateTime?             @map("completed_at")
+  /** Canonical product understanding from the Shared Analysis stage (reused by future workflows). */
+  sharedAnalysis Json?                 @map("shared_analysis")
+  /** Live per-stage status for the progress UI: { sharedAnalysis, pmReview, customerVoice, competitor, recommendation }. */
+  agentStatus    Json?                 @map("agent_status")
 
   product             Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
   feature             Feature?             @relation(fields: [featureId], references: [id])

@@ -10,6 +10,19 @@ The goal is to become the default AI companion for Product Managers across tools
 
 ---
 
+# Pocket PM Platform (`platform/`) — the persistent Product OS
+
+The repo now also contains **`platform/`** — a standalone **Next.js (App Router) + Prisma + PostgreSQL + Auth.js** monolith that turns Pocket PM from a one-time reviewer into a persistent, AI-native **Product Operating System**. It is self-contained (own `package.json`/build) and does **not** affect the extension build.
+
+* **Data model** (`platform/prisma/schema.prisma`): Products, Product Members (RBAC), Features, PRDs (versioned), Review Runs, PM Review, Customer Evidence, Competitors (+ Snapshots), Findings, Decisions, Files, Timeline — plus a `User` table for auth. State machines (`platform/src/server/stateMachines`) enforce Feature/PRD/ReviewRun/Decision/Product lifecycles; **every mutation writes a `Timeline` event**. Business logic lives in `platform/src/server/services/*`; route handlers stay thin.
+* **Review orchestration** (`platform/src/server/reviewOrchestrator.ts`): clicking **Review PRD** creates a `ReviewRun` (Pending), then runs the Pocket PM agents **sequentially** — Shared Analysis → PM Review → Customer Voice → Competitor → Recommendation — persisting every output (PMReview, CustomerEvidence, Competitor/Snapshot, Findings, a `Decision` (Proposed), and `ReviewRun.recommendation`). Runs async via Next `after()`; the Feature page polls `ReviewRun.agentStatus` for live per-agent progress (Pending → Running → Completed/Failed). The canonical Shared Analysis is persisted on `ReviewRun.sharedAnalysis`. Persistence (`platform/src/server/persistence.ts`) is kept isolated from AI execution.
+* **Agents are reused, not rewritten.** The intelligence engine (`src/lib/agents`, `src/lib/claude`, `src/lib/features/{parse,pmReview,def,quality}`, `src/lib/types`) is **vendored verbatim** into `platform/src/lib/` — AI logic byte-unchanged. The ONLY adaptation is `platform/src/lib/config.ts`, which reads `process.env` (`GEMINI_API_KEY`/`GEMINI_MODEL`) instead of Vite `import.meta.env`. **Do not fork the AI logic**; keep the two copies in sync until they are extracted into a shared package.
+* **Recommendation = a `Decision` (Proposed)** per the workflow spec — there is no separate Recommendation table.
+* **Run it:** `cd platform && cp .env.example .env` (set `GEMINI_API_KEY` for live reviews) → `npm run db` (embedded Postgres, no Docker; `docker compose up` is an alternative) → `npm run prisma:migrate` → `npm run dev`. Verify the pipeline headlessly with `npx tsx scripts/e2e-review.ts`.
+* **Out of scope (hackathon MVP):** approval workflows, PRD editing, collaborative review, notifications/Slack/Jira, continuous monitoring, background-refresh/autonomous jobs, binary-PRD text extraction (markdown/text PRDs only).
+
+---
+
 # Vision
 
 Build the most useful AI assistant for Product Managers.

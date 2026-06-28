@@ -3,11 +3,12 @@ import { prisma } from '@/lib/db'
 import { requireUser } from '@/lib/session'
 import { getFeature } from '@/server/services/features'
 import { listPrds } from '@/server/services/prds'
-import { FEATURE_STAGE_FLOW, REVIEW_FLOW } from '@/server/stateMachines'
+import { FEATURE_STAGE_FLOW } from '@/server/stateMachines'
 import { StageControl } from '@/components/StageControl'
 import { PrdUploadForm } from '@/components/PrdUploadForm'
 import { StartReviewButton } from '@/components/StartReviewButton'
-import { ReviewRunStatusControl } from '@/components/ReviewRunStatusControl'
+import { ReviewProgress } from '@/components/ReviewProgress'
+import { ReviewResults } from '@/components/ReviewResults'
 
 export default async function FeaturePage({
   params,
@@ -19,10 +20,16 @@ export default async function FeaturePage({
   const feature = await getFeature(user.id, fid)
   const [prds, runs] = await Promise.all([
     listPrds(user.id, fid),
-    prisma.reviewRun.findMany({ where: { featureId: fid }, orderBy: { startedAt: 'desc' }, take: 10 }),
+    prisma.reviewRun.findMany({
+      where: { featureId: fid },
+      orderBy: { startedAt: { sort: 'desc', nulls: 'first' } },
+      take: 10,
+    }),
   ])
   const latestPrd = prds[0]
   const nextStages = FEATURE_STAGE_FLOW[feature.stage] ?? []
+  const activeRun = runs.find((r) => r.status === 'Pending' || r.status === 'Running')
+  const latestCompleted = runs.find((r) => r.status === 'Completed')
 
   return (
     <div className="space-y-8">
@@ -78,23 +85,47 @@ export default async function FeaturePage({
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-700">Review runs</h2>
+          <h2 className="text-sm font-semibold text-slate-700">AI Review</h2>
           <StartReviewButton productId={feature.productId} featureId={fid} prdId={latestPrd?.id} />
         </div>
-        {runs.length === 0 ? (
-          <p className="text-sm text-slate-500">No review runs yet. Agents run in a later phase — a run starts as Pending.</p>
-        ) : (
-          <ul className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
-            {runs.map((r) => (
-              <li key={r.id} className="flex items-center justify-between px-4 py-2 text-sm">
-                <span className="flex items-center gap-2">
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{r.status}</span>
-                  <span className="text-slate-500">{r.trigger}</span>
-                </span>
-                <ReviewRunStatusControl runId={r.id} nextStatuses={REVIEW_FLOW[r.status] ?? []} />
-              </li>
-            ))}
-          </ul>
+
+        {!latestPrd && (
+          <p className="text-sm text-slate-500">Upload a PRD above, then run a review.</p>
+        )}
+
+        {/* Live progress for an in-flight run (polls + refreshes on completion). */}
+        {activeRun && <ReviewProgress runId={activeRun.id} />}
+
+        {/* Persisted results of the latest completed review. */}
+        {latestCompleted && (
+          <div className="space-y-2">
+            <div className="text-xs text-slate-500">
+              Latest review · {latestCompleted.completedAt ? new Date(latestCompleted.completedAt).toLocaleString() : ''}
+            </div>
+            <ReviewResults runId={latestCompleted.id} />
+          </div>
+        )}
+
+        {/* Review history (persistent organizational knowledge). */}
+        {runs.length > 0 && (
+          <div>
+            <div className="mt-2 text-xs font-medium uppercase tracking-wide text-slate-400">Review history</div>
+            <ul className="mt-1 divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
+              {runs.map((r) => (
+                <li key={r.id} className="flex items-center justify-between px-4 py-2 text-sm">
+                  <span className="flex items-center gap-2">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{r.status}</span>
+                    {r.recommendation && (
+                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-white">{r.recommendation}</span>
+                    )}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {r.startedAt ? new Date(r.startedAt).toLocaleString() : 'pending'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
     </div>

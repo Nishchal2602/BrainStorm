@@ -1,0 +1,155 @@
+import 'dotenv/config'
+import bcrypt from 'bcryptjs'
+import { prisma } from '@/lib/db'
+import { createProduct } from '@/server/services/products'
+import { createFeature } from '@/server/services/features'
+import { uploadPrd } from '@/server/services/prds'
+import { createReviewRun } from '@/server/services/reviewRuns'
+import { ReviewOrchestrator } from '@/server/reviewOrchestrator'
+import { persistCompetitorLandscape, persistCustomerEvidence } from '@/server/persistence'
+import type { LlmPort } from '@/lib/agents/llm'
+import type { CompetitorPayload, CustomerVoicePayload } from '@/lib/agents/types'
+
+function assert(cond: unknown, msg: string) {
+  if (!cond) throw new Error(`ASSERT FAILED: ${msg}`)
+}
+
+// Fake LLM: returns just enough per call for the pipeline to reach a Completed run.
+const fakeLlm: LlmPort = {
+  async generateStructured<T>(req: { label?: string }): Promise<{ data: T }> {
+    const label = req.label
+    if (label === 'analyze') {
+      return {
+        data: {
+          industry: 'SaaS',
+          productCategory: 'Enterprise AI Assistant',
+          featureCategory: 'Context awareness',
+          regulatorySensitivity: 'low',
+          isNewProduct: true,
+          coreProblem: 'AI lacks company context',
+          persona: 'Product Manager',
+          synonyms: [],
+          searchQueries: [],
+          solutionCategory: 'Enterprise AI Assistant',
+          keyCapabilities: ['RAG'],
+          confidence: 0.8,
+          rationale: 'clear',
+        } as T,
+      }
+    }
+    if (label === 'customer_voice_hypotheses') return { data: { hypotheses: [] } as T }
+    if (label === 'customer_voice_verify') return { data: { judgments: [] } as T }
+    // synthesis (recommendation engine)
+    return {
+      data: {
+        executiveSummary: 'Differentiated; proceed with focus on organizational reasoning.',
+        recommendation: 'Build with Changes',
+        confidence: 0.72,
+        supportingEvidence: ['Clear problem'],
+        contradictingEvidence: [],
+        risks: ['Crowded market'],
+        openQuestions: ['Which segment first?'],
+        suggestedExperiments: [],
+        missingRequirements: [],
+        finalVerdict: 'Build with Changes',
+        decision: { recommendation: 'build_with_changes', confidence: 0.72, rationale: ['Differentiated positioning'] },
+      } as T,
+    }
+  },
+  async generateText(req: { label?: string }) {
+    if (req.label === 'pm_review') {
+      return {
+        text: '## Risks\n- Adoption risk\n## Critical Unknowns\n- Undefined success metric\n## Implementation Considerations\n- Data integration effort\n## If I Were the PM\n1. Validate the core problem with 5 PMs',
+        sources: [],
+      }
+    }
+    return { text: 'NO COMPETITORS FOUND', sources: [] }
+  },
+}
+
+async function main() {
+  const stamp = Date.now()
+  const user = await prisma.user.create({
+    data: { email: `review+${stamp}@example.com`, passwordHash: await bcrypt.hash('password123', 10), name: 'Rev' },
+  })
+  const product = await createProduct(user.id, { name: `Review Demo ${stamp}` })
+  const feature = await createFeature(user.id, product.id, { name: 'Context awareness' })
+  const prd = await uploadPrd(user.id, feature.id, {
+    fileName: 'prd.md',
+    mimeType: 'text/markdown',
+    body: Buffer.from('# Context-aware Enterprise AI\nWe want AI that understands company context.'),
+    title: 'PRD v1',
+  })
+  const run = await createReviewRun(user.id, product.id, { featureId: feature.id, prdId: prd.id })
+  assert(run.status === 'Pending', 'run starts Pending')
+
+  // Part A — orchestrate with the fake LLM (awaited).
+  await new ReviewOrchestrator({ llm: fakeLlm }).runReview(run.id, user.id)
+
+  const done = await prisma.reviewRun.findUniqueOrThrow({ where: { id: run.id } })
+  assert(done.status === 'Completed', `run Completed (was ${done.status})`)
+  assert(done.recommendation === 'BuildWithChanges', `recommendation persisted (${done.recommendation})`)
+  assert(done.sharedAnalysis != null, 'sharedAnalysis persisted on run')
+  const ag = done.agentStatus as Record<string, string>
+  assert(
+    ['sharedAnalysis', 'pmReview', 'customerVoice', 'competitor', 'recommendation'].every((k) => ag[k] === 'completed'),
+    `all agentStatus completed (${JSON.stringify(ag)})`,
+  )
+  const pm = await prisma.pMReview.findUnique({ where: { reviewRunId: run.id } })
+  assert(pm && (pm.risks as string[]).length > 0, 'PMReview persisted with risks')
+  const decision = await prisma.decision.findFirst({ where: { reviewRunId: run.id } })
+  assert(decision?.status === 'Proposed', 'Decision (Proposed) created from recommendation')
+  const events = await prisma.timelineEvent.findMany({ where: { productId: product.id } })
+  const types = events.map((e) => e.eventType)
+  for (const want of ['Review Started', 'Recommendation Created', 'Review Completed']) {
+    assert(types.includes(want), `timeline has "${want}"`)
+  }
+  console.log('• Part A (orchestration → Completed):', types.filter((t) => t.startsWith('Review') || t.startsWith('Recommendation')).join(', '))
+
+  // Part B — the two complex mappers with canned payloads (deterministic persistence proof).
+  const run2 = await createReviewRun(user.id, product.id, { featureId: feature.id, prdId: prd.id })
+  const cvPayload = {
+    hypotheses: [
+      {
+        statement: 'PMs re-supply company context to AI',
+        verdict: 'supported',
+        confidence: 80,
+        supportingCount: 3,
+        contradictingCount: 1,
+        supporting: [{ quote: 'I paste context every time', url: 'https://reddit.com/x', subreddit: 'productmanagement' }],
+        contradicting: [],
+      },
+    ],
+    distinctSubreddits: ['productmanagement'],
+  } as unknown as CustomerVoicePayload
+  const compPayload = {
+    landscape: {
+      competitors: [
+        { name: 'Glean', url: 'https://glean.com', category: 'Enterprise Search', positioning: 'Search', confidence: 85, capabilities: [{ name: 'Enterprise Search', evidence: { url: 'https://glean.com', quote: 'search' } }], strengths: ['retrieval'], weaknesses: ['reasoning'] },
+      ],
+    },
+    differentiationScore: 65,
+  } as unknown as CompetitorPayload
+
+  await prisma.$transaction(async (tx) => {
+    await persistCustomerEvidence(tx, run2.id, cvPayload, [{ title: 'Context pain', detail: 'real', kind: 'support' }])
+    await persistCompetitorLandscape(tx, run2.id, product.id, compPayload, [{ title: 'Glean strong', detail: '', kind: 'risk' }])
+  })
+  const ce = await prisma.customerEvidence.findMany({ where: { reviewRunId: run2.id } })
+  assert(ce.length === 1 && ce[0].verdict === 'Supported', 'CustomerEvidence persisted (Supported)')
+  const snaps = await prisma.competitorSnapshot.findMany({ where: { reviewRunId: run2.id }, include: { competitor: true } })
+  assert(snaps.length === 1 && snaps[0].competitor.name === 'Glean', 'Competitor + Snapshot persisted (Glean)')
+  const findings = await prisma.finding.findMany({ where: { reviewRunId: run2.id } })
+  assert(findings.length >= 2, 'Findings persisted')
+  console.log('• Part B (persistence mappers): CustomerEvidence + Competitor/Snapshot + Findings ✓')
+
+  console.log('\nREVIEW E2E OK ✅')
+}
+
+main()
+  .then(() => prisma.$disconnect())
+  .catch(async (e) => {
+    console.error('\nREVIEW E2E FAILED ❌\n', e)
+    await prisma.$disconnect()
+    process.exit(1)
+  })
