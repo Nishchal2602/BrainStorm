@@ -9,6 +9,7 @@ import { PrdUploadForm } from '@/components/PrdUploadForm'
 import { StartReviewButton } from '@/components/StartReviewButton'
 import { ReviewProgress } from '@/components/ReviewProgress'
 import { ReviewResults } from '@/components/ReviewResults'
+import { WorkflowExecutionCard } from '@/components/WorkflowExecutionCard'
 
 export default async function FeaturePage({
   params,
@@ -102,6 +103,15 @@ export default async function FeaturePage({
             <div className="text-xs text-slate-500">
               Latest review · {latestCompleted.completedAt ? new Date(latestCompleted.completedAt).toLocaleString() : ''}
             </div>
+            {/* Lemma branding — renders only when this run executed via a Lemma workflow. */}
+            <WorkflowExecutionCard
+              run={{
+                status: latestCompleted.status,
+                agentStatus: latestCompleted.agentStatus as Record<string, string> | null,
+                startedAt: latestCompleted.startedAt,
+                completedAt: latestCompleted.completedAt,
+              }}
+            />
             <ReviewResults runId={latestCompleted.id} />
           </div>
         )}

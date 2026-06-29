@@ -27,19 +27,43 @@ npm run prisma:migrate        # prisma migrate dev
 npm run dev                   # http://localhost:3000  → sign up → create a product
 ```
 
-Verify the core without the browser: `npx tsx scripts/e2e.ts` (exercises services,
-state machines, timeline, file storage, and access control against the DB).
+Verify without the browser (DB up): `npx tsx scripts/e2e.ts` (services/state-machines/timeline/
+storage/access), `npx tsx scripts/e2e-review.ts` (full review pipeline → persisted results),
+`npx tsx scripts/e2e-lemma-review.ts` (the Lemma execution path via a fake client, no Docker).
 
-## What's built (this phase)
-- **CRUD + UI:** Products, Features (with stage transitions), PRD upload, Review-run shells
-  (created `Pending` — agents run later), Decisions (`Proposed` → approve/reject), Files, Members.
-- **State machines** (`src/server/stateMachines`) enforce Feature/PRD/ReviewRun/Decision/Product
-  lifecycles; every mutation writes a **Timeline** event (`src/server/timeline.ts`).
+## What's built
+- **CRUD + UI:** Products, Features (stage transitions), PRD upload, Decisions
+  (`Proposed` → approve/reject), Files, Members.
+- **Review orchestration:** **Review PRD** runs the Pocket PM agents end-to-end
+  (Shared Analysis → PM Review → Customer Voice → Competitor → Recommendation) via
+  `src/server/reviewOrchestrator.ts`, persisting PMReview/CustomerEvidence/Competitor+Snapshot/
+  Findings/Decision; the Feature page polls live per-agent progress.
+- **State machines** (`src/server/stateMachines`) enforce lifecycles; every mutation writes a
+  **Timeline** event (`src/server/timeline.ts`).
 - **Auth** (`src/lib/auth.ts`) — credentials + JWT; membership-gated access (`src/server/access.ts`).
 
+## Review execution engine (Lemma optional)
+By default reviews run **in-process** (the orchestrator above). You can instead have the review
+execute as a **real [Lemma](https://github.com/lemma-work/lemma-platform) workflow** — an
+**additive, opt-in** path behind `LEMMA_ENABLED`:
+
+| Lemma owns | Pocket PM owns |
+|---|---|
+| Workflow graph, run lifecycle, step sequencing, run status | Agent compute (Gemini), persistence, ReviewRun mirror, timeline, UI |
+
+Lemma's steps run inside its own runtime and can't call our TypeScript agents, so we use Lemma
+as the **workflow engine that sequences** the 5 steps (one `FORM` node each): the
+`LemmaReviewRunner` (`src/server/lemma/`) starts a Lemma run, and for each step runs the existing
+agent in-app + persists, then advances the run with `submitForm`. The Feature page shows a
+**"Executed using Lemma Workflow"** card. If Lemma is disabled, unconfigured, or unreachable, the
+review **automatically falls back** to the in-process orchestrator — so the Lemma stack is never a
+hard dependency. The existing orchestrator and the agents are **unchanged**.
+
+Setup (Docker + the Lemma stack) and env vars: **`lemma/README.md`**. Validate connectivity with
+`npm run lemma:spike`.
+
 ## Deferred (still under design)
-Agent execution / review orchestration (PMReview, CustomerEvidence, Competitors, Findings
-tables exist as models only), polished approval routing, and Experiments (out of scope).
+Polished approval routing; Experiments (out of scope); binary-PRD text extraction (markdown/text PRDs only).
 
 > Prisma 7 note: the DB URL lives in `prisma.config.ts` (not `schema.prisma`); the runtime
 > client uses the `@prisma/adapter-pg` driver adapter (`src/lib/db.ts`).

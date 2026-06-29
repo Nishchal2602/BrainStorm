@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { WorkflowExecutionCard } from './WorkflowExecutionCard'
 
 const STAGES: [string, string][] = [
   ['sharedAnalysis', 'Shared Analysis'],
@@ -14,6 +15,8 @@ const ICON: Record<string, string> = { pending: '○', running: '◐', completed
 interface RunStatus {
   status: string
   agentStatus?: Record<string, string> | null
+  startedAt?: string | null
+  completedAt?: string | null
 }
 
 /** Polls the review run and shows per-agent progress; refreshes the page when done. */
@@ -44,6 +47,13 @@ export function ReviewProgress({ runId }: { runId: string }) {
   }, [runId, router])
 
   const st = run?.agentStatus ?? {}
+
+  // When the review is executing on Lemma, the Workflow Execution card is the live
+  // progress view (it shows the same per-step states plus the engine + workflow id).
+  if (st.__engine === 'lemma') {
+    return <WorkflowExecutionCard run={run ?? {}} />
+  }
+
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
       <div className="text-sm font-semibold text-amber-800">

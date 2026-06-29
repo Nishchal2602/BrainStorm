@@ -2,21 +2,33 @@
 // Mirrors the extension's config shape but sources values from process.env
 // (the extension used Vite import.meta.env.VITE_*). Server-only — imported by the
 // vendored claude client through the ReviewOrchestrator.
+//
+// Every value is read through a getter (not captured into a module-level const at
+// import time). In `next dev`, editing `.env` reloads `process.env` in-process
+// ("Reload env: .env") but does NOT re-run already-evaluated module top-level code;
+// eager consts would stay stale until a full server restart. Lazy getters read the
+// current process.env on each access, so a pasted key takes effect on the next call.
 
-const proxyUrl = (process.env.PROXY_URL ?? '').trim()
-const proxySecret = (process.env.PROXY_SECRET ?? '').trim()
-const geminiApiKey = (process.env.GEMINI_API_KEY ?? '').trim()
-const geminiModel = (process.env.GEMINI_MODEL ?? '').trim() || 'gemini-2.5-flash'
-const demoMode = (process.env.DEMO_MODE ?? '').trim() === 'true'
+const env = (name: string): string => (process.env[name] ?? '').trim()
 
 export const config = {
-  proxyUrl,
-  proxySecret,
+  get proxyUrl(): string {
+    return env('PROXY_URL')
+  },
+  get proxySecret(): string {
+    return env('PROXY_SECRET')
+  },
   /** Google Gemini API key (server env — see usesGemini). */
-  geminiApiKey,
+  get geminiApiKey(): string {
+    return env('GEMINI_API_KEY')
+  },
   /** Gemini model id used for every call. */
-  geminiModel,
-  demoMode,
+  get geminiModel(): string {
+    return env('GEMINI_MODEL') || 'gemini-2.5-flash'
+  },
+  get demoMode(): boolean {
+    return env('DEMO_MODE') === 'true'
+  },
   /** True when a Gemini key is configured (takes precedence over the proxy). */
   get usesGemini(): boolean {
     return this.geminiApiKey.length > 0

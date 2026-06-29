@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { config } from '@/lib/config'
 import { getStorage } from '@/lib/storage'
 import { recordEvent } from '@/server/timeline'
 import { assertTransition, REVIEW_FLOW } from '@/server/stateMachines'
@@ -71,12 +72,15 @@ export interface ReviewOrchestratorDeps {
  */
 export class ReviewOrchestrator {
   private readonly llm: LlmPort
+  /** True when running on the real LLM backend (not an injected test fake). */
+  private readonly requiresBackend: boolean
   private readonly analyzer: DocumentAnalyzer
   private readonly cv: CustomerVoiceAgent
   private readonly competitor: CompetitorIntelligenceAgent
   private readonly synth: Synthesizer
 
   constructor(deps: ReviewOrchestratorDeps = {}) {
+    this.requiresBackend = !deps.llm
     this.llm = deps.llm ?? new ClaudeLlmAdapter('claude-sonnet-4-6')
     this.analyzer = new DocumentAnalyzer(this.llm, consoleLogger)
     this.cv = new CustomerVoiceAgent(consoleLogger, this.llm)
@@ -93,6 +97,11 @@ export class ReviewOrchestrator {
       this.persistStatus(reviewRunId, { ...status, [key]: (status[key] = state) })
 
     try {
+      if (this.requiresBackend && !config.hasBackend) {
+        throw new Error(
+          'No AI backend configured — set GEMINI_API_KEY in platform/.env, then restart `npm run dev`.',
+        )
+      }
       const { document, productName, industry, featureName, productId, featureId } =
         await this.loadContext(reviewRunId)
 

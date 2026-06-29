@@ -1,0 +1,76 @@
+{
+  "name": "pocket-pm-review",
+  "description": "Pocket PM review pipeline. Five sequential FORM gates — one per agent. The Pocket PM app runs the matching agent in-app for each gate, persists the output, then submits the form to advance the run (Lemma sequences; Pocket PM computes).",
+  "start": { "type": "MANUAL" },
+  "nodes": [
+    {
+      "id": "sharedAnalysis",
+      "type": "FORM",
+      "label": "Shared Document Analysis",
+      "config": {
+        "input_schema": {
+          "type": "object",
+          "properties": { "ok": { "type": "boolean" } },
+          "required": ["ok"]
+        }
+      }
+    },
+    {
+      "id": "pmReview",
+      "type": "FORM",
+      "label": "PM Review",
+      "config": {
+        "input_schema": {
+          "type": "object",
+          "properties": { "ok": { "type": "boolean" } },
+          "required": ["ok"]
+        }
+      }
+    },
+    {
+      "id": "customerVoice",
+      "type": "FORM",
+      "label": "Customer Voice",
+      "config": {
+        "input_schema": {
+          "type": "object",
+          "properties": { "ok": { "type": "boolean" } },
+          "required": ["ok"]
+        }
+      }
+    },
+    {
+      "id": "competitor",
+      "type": "FORM",
+      "label": "Competitor Intelligence",
+      "config": {
+        "input_schema": {
+          "type": "object",
+          "properties": { "ok": { "type": "boolean" } },
+          "required": ["ok"]
+        }
+      }
+    },
+    {
+      "id": "recommendation",
+      "type": "FORM",
+      "label": "Recommendation",
+      "config": {
+        "input_schema": {
+          "type": "object",
+          "properties": { "ok": { "type": "boolean" } },
+          "required": ["ok"]
+        }
+      }
+    },
+    { "id": "end", "type": "END", "label": "Done" }
+  ],
+  "edges": [
+    { "id": "e1", "source": "sharedAnalysis", "target": "pmReview" },
+    { "id": "e2", "source": "pmReview", "target": "customerVoice" },
+    { "id": "e3", "source": "customerVoice", "target": "competitor" },
+    { "id": "e4", "source": "competitor", "target": "recommendation" },
+    { "id": "e5", "source": "recommendation", "target": "end" }
+  ],
+  "visibility": "POD"
+}
