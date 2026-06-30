@@ -1,97 +1,84 @@
-import type { LemmaClient } from 'lemma-sdk'
 import { lemmaConfig } from './config'
 import type { LemmaClientPort, LemmaRunView, LemmaRunStatus } from './port'
 
 /**
- * Real LemmaClientPort backed by `lemma-sdk`.
+ * Real LemmaClientPort — direct HTTP calls to the Lemma backend API with
+ * Authorization: Bearer <LEMMA_TOKEN>. No SDK needed in Node: the lemma-sdk
+ * wraps the same REST API but its auth layer hard-guards on `typeof window`,
+ * making every auth path a no-op in Node. Direct fetch bypasses that entirely
+ * and the Bearer token approach is confirmed to work (curl-verified).
  *
- * Two deliberate isolation choices:
- *  1. `lemma-sdk` is **dynamically imported** (not a top-level import) so its
- *     browser-oriented deps (supertokens-web-js) never execute during `next build`
- *     or on the in-process fallback path — only when a live Lemma review actually runs.
- *  2. Headless auth: the SDK's documented token path reads `localStorage.lemma_token`
- *     and then sends `Authorization: Bearer <token>`. Node has no localStorage, so we
- *     install a minimal shim seeded with LEMMA_TOKEN before constructing the client.
- *
- * The SDK type is imported with `import type` (erased at compile time — no runtime import).
+ * API surface used:
+ *   POST /pods/{pod_id}/workflows/{name}/runs        → create run
+ *   GET  /pods/{pod_id}/workflow-runs/{run_id}       → poll run
+ *   POST /pods/{pod_id}/workflow-runs/{run_id}/form  → advance FORM node
+ *   POST /pods/{pod_id}/workflow-runs/{run_id}/cancel
  */
 export class LemmaWorkflowClient implements LemmaClientPort {
-  private client: LemmaClient | null = null
-
-  private async getClient(): Promise<LemmaClient> {
-    if (this.client) return this.client
-    if (!lemmaConfig.token) throw new Error('LEMMA_TOKEN is required for headless Lemma access')
-    installTokenShim(lemmaConfig.token)
-    let mod: typeof import('lemma-sdk')
-    try {
-      mod = await import('lemma-sdk')
-    } catch (e) {
-      throw new Error(`Failed to load lemma-sdk: ${e instanceof Error ? e.message : String(e)}`)
+  private get headers() {
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${lemmaConfig.token}`,
     }
-    this.client = new mod.LemmaClient({
-      apiUrl: lemmaConfig.baseUrl,
-      authUrl: lemmaConfig.authUrl || `${lemmaConfig.baseUrl}/auth`,
-      podId: lemmaConfig.podId,
+  }
+
+  private get base() {
+    return lemmaConfig.baseUrl.replace(/\/$/, '')
+  }
+
+  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await fetch(`${this.base}${path}`, {
+      method,
+      headers: this.headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     })
-    return this.client
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText)
+      throw new Error(`Lemma API ${method} ${path} → ${res.status}: ${text}`)
+    }
+    return res.json() as Promise<T>
   }
 
   async startRun(workflowName: string): Promise<LemmaRunView> {
-    const c = await this.getClient()
-    return toView(await c.workflows.runs.create(workflowName))
+    const podId = lemmaConfig.podId
+    const run = await this.req<LemmaRawRun>(
+      'POST',
+      `/pods/${podId}/workflows/${workflowName}/runs`,
+      {},
+    )
+    return toView(run)
   }
 
   async getRun(runId: string): Promise<LemmaRunView> {
-    const c = await this.getClient()
-    return toView(await c.workflows.runs.get(runId, lemmaConfig.podId))
+    const podId = lemmaConfig.podId
+    const run = await this.req<LemmaRawRun>('GET', `/pods/${podId}/workflow-runs/${runId}`)
+    return toView(run)
   }
 
   async submitForm(runId: string, nodeId: string, inputs: Record<string, unknown> = {}): Promise<LemmaRunView> {
-    const c = await this.getClient()
-    return toView(await c.workflows.runs.submitForm(runId, { node_id: nodeId, inputs }, lemmaConfig.podId))
+    const podId = lemmaConfig.podId
+    const run = await this.req<LemmaRawRun>('POST', `/pods/${podId}/workflow-runs/${runId}/form`, {
+      node_id: nodeId,
+      inputs,
+    })
+    return toView(run)
   }
 
   async cancel(runId: string): Promise<void> {
-    const c = await this.getClient()
-    await c.workflows.runs.cancel(runId, lemmaConfig.podId)
+    const podId = lemmaConfig.podId
+    await this.req('POST', `/pods/${podId}/workflow-runs/${runId}/cancel`)
   }
 }
 
-/** Map the SDK's WorkflowRunResponse onto our reduced view. */
-function toView(run: {
+interface LemmaRawRun {
   id: string
   status?: string
   active_wait?: { node_id?: string; wait_type?: string } | null
   error?: string | null
-}): LemmaRunView {
+}
+
+function toView(run: LemmaRawRun): LemmaRunView {
   const status = (run.status ?? 'RUNNING') as LemmaRunStatus
   const waitingNodeId = status === 'WAITING' && run.active_wait?.node_id ? run.active_wait.node_id : null
   return { id: run.id, status, waitingNodeId, error: run.error ?? null }
-}
-
-/**
- * Minimal Node localStorage shim seeded with the Lemma token. The SDK reads
- * `localStorage.getItem('lemma_token')` to enable Bearer auth; everything else is a no-op.
- * Idempotent and non-destructive (won't clobber an existing localStorage).
- */
-function installTokenShim(token: string): void {
-  const g = globalThis as unknown as { localStorage?: Storage }
-  if (g.localStorage) return
-  const store: Record<string, string> = { lemma_token: token }
-  g.localStorage = {
-    getItem: (k: string) => (k in store ? store[k] : null),
-    setItem: (k: string, v: string) => {
-      store[k] = String(v)
-    },
-    removeItem: (k: string) => {
-      delete store[k]
-    },
-    clear: () => {
-      for (const k of Object.keys(store)) delete store[k]
-    },
-    key: (i: number) => Object.keys(store)[i] ?? null,
-    get length() {
-      return Object.keys(store).length
-    },
-  } as Storage
 }
