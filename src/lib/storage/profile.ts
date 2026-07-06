@@ -10,10 +10,6 @@ export const DEFAULT_USER_CONTEXT: UserContext = {
   companyName: '',
   industry: '',
   companyStage: '',
-  productName: '',
-  productDescription: '',
-  primaryUser: '',
-  businessGoal: '',
 }
 
 export const DEFAULT_REVIEW_CONTEXT: ReviewContext = {
@@ -21,8 +17,9 @@ export const DEFAULT_REVIEW_CONTEXT: ReviewContext = {
   problemStatement: '',
   targetUser: '',
   successMetric: '',
+  // Fixed for the MVP: PRD reviews only, always an expert-level critique.
   reviewType: 'prd',
-  familiarityLevel: 'some_knowledge',
+  familiarityLevel: 'domain_expert',
 }
 
 // The UIs autosave on every keystroke, so read-modify-write calls can overlap.

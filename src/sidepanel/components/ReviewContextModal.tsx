@@ -1,34 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReviewContext } from '@/lib/types'
 import { DEFAULT_REVIEW_CONTEXT, getReviewDraft, setReviewDraft } from '@/lib/storage/profile'
-import { FAMILIARITY_OPTIONS, REVIEW_TYPE_OPTIONS } from '@/lib/context/contextBlock'
-import { SelectField, TextField } from './fields'
-
-const FAMILIARITY_HINT: Record<string, string> = {
-  exploring: 'More educational feedback.',
-  some_knowledge: 'Balanced feedback.',
-  domain_expert: 'Concise, high-signal critique.',
-}
+import { TextField } from './fields'
 
 /**
  * Collected before every PM Review. Prefilled from the autosaved draft so it's a
  * quick confirm, not re-entry. Required fields are validated before running.
+ * Review type and familiarity are fixed for the MVP (PRD review, expert-level
+ * critique), so they're forced here rather than asked.
  */
 export function ReviewContextModal({
   onRun,
   onCancel,
+  initialDeep = false,
 }: {
   onRun: (ctx: ReviewContext, deep: boolean) => void
   onCancel: () => void
+  /** Pre-check the deep toggle (e.g. opened from an empty-tab CTA). */
+  initialDeep?: boolean
 }) {
   const [ctx, setCtx] = useState<ReviewContext>(DEFAULT_REVIEW_CONTEXT)
   const [showErrors, setShowErrors] = useState(false)
-  const [deep, setDeep] = useState(false)
+  const [deep, setDeep] = useState(initialDeep)
   const touched = useRef(false)
 
   useEffect(() => {
     getReviewDraft().then((v) => {
-      if (!touched.current) setCtx(v)
+      // Override any older saved draft: these two are fixed for now.
+      if (!touched.current) setCtx({ ...v, reviewType: 'prd', familiarityLevel: 'domain_expert' })
     })
   }, [])
 
@@ -102,25 +101,6 @@ export function ReviewContextModal({
             placeholder="Reduce documentation time by 50%"
             hint="Optional but recommended."
           />
-          <SelectField
-            label="Review type"
-            required
-            allowEmpty={false}
-            value={ctx.reviewType}
-            onChange={(v) => update({ reviewType: v })}
-            options={REVIEW_TYPE_OPTIONS}
-          />
-          <SelectField
-            label="Familiarity level"
-            required
-            allowEmpty={false}
-            value={ctx.familiarityLevel}
-            onChange={(v) => update({ familiarityLevel: v })}
-            options={FAMILIARITY_OPTIONS}
-          />
-          <p className="-mt-1.5 text-[11px] text-slate-400">
-            {FAMILIARITY_HINT[ctx.familiarityLevel]}
-          </p>
 
           <label className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
             <input

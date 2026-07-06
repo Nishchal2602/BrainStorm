@@ -87,15 +87,6 @@ export function buildContextBlock(user: UserContext, review?: ReviewContext): st
   ].filter(Boolean)
   if (company.length) sections.push('Company:\n' + company.join('\n'))
 
-  const product = [
-    line('Name', user.productName),
-    line('Description', user.productDescription),
-    line('Primary User', user.primaryUser),
-  ].filter(Boolean)
-  if (product.length) sections.push('Product:\n' + product.join('\n'))
-
-  if (user.businessGoal.trim()) sections.push('Business Goal:\n  ' + user.businessGoal.trim())
-
   if (review) {
     const r = [
       line('Feature', review.featureName),

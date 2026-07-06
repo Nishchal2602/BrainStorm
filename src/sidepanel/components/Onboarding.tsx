@@ -14,7 +14,7 @@ import {
 } from '@/lib/context/contextBlock'
 import { SelectField, TextField } from './fields'
 
-const STEPS = ['Profile', 'Company', 'Product']
+const STEPS = ['Profile', 'Company']
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const [ctx, setCtx] = useState<UserContext>(DEFAULT_USER_CONTEXT)
@@ -108,35 +108,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 onChange={(v) => update({ companyStage: v })}
                 options={STAGE_OPTIONS}
                 placeholder="Select stage"
-              />
-            </>
-          )}
-          {step === 2 && (
-            <>
-              <TextField
-                label="Product name"
-                value={ctx.productName}
-                onChange={(v) => update({ productName: v })}
-                placeholder="PM Copilot"
-                maxLength={80}
-              />
-              <TextField
-                label="What product are you building?"
-                value={ctx.productDescription}
-                onChange={(v) => update({ productDescription: v })}
-                placeholder="AI copilot that helps product managers review PRDs."
-              />
-              <TextField
-                label="Who is your primary user?"
-                value={ctx.primaryUser}
-                onChange={(v) => update({ primaryUser: v })}
-                placeholder="Product managers at B2B SaaS companies."
-              />
-              <TextField
-                label="What business outcome are you trying to achieve?"
-                value={ctx.businessGoal}
-                onChange={(v) => update({ businessGoal: v })}
-                placeholder="Increase PM productivity and improve documentation quality."
               />
             </>
           )}

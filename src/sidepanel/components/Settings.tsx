@@ -131,31 +131,6 @@ export function Settings({
               options={STAGE_OPTIONS}
               placeholder="Select stage"
             />
-            <TextField
-              label="Product name"
-              value={profile.productName}
-              onChange={(v) => updateProfile({ productName: v })}
-              placeholder="PM Copilot"
-              maxLength={80}
-            />
-            <TextField
-              label="What product are you building?"
-              value={profile.productDescription}
-              onChange={(v) => updateProfile({ productDescription: v })}
-              placeholder="AI copilot that helps product managers review PRDs."
-            />
-            <TextField
-              label="Who is your primary user?"
-              value={profile.primaryUser}
-              onChange={(v) => updateProfile({ primaryUser: v })}
-              placeholder="Product managers at B2B SaaS companies."
-            />
-            <TextField
-              label="What business outcome are you trying to achieve?"
-              value={profile.businessGoal}
-              onChange={(v) => updateProfile({ businessGoal: v })}
-              placeholder="Increase PM productivity and improve documentation quality."
-            />
           </div>
         )}
       </details>

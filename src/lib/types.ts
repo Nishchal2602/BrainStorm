@@ -49,10 +49,6 @@ export interface UserContext {
   companyName: string
   industry: Industry | ''
   companyStage: CompanyStage | ''
-  productName: string
-  productDescription: string
-  primaryUser: string
-  businessGoal: string
   /** Set when onboarding is completed (presence ⇒ onboarded). */
   onboardedAt?: number
 }
