@@ -1,6 +1,6 @@
 import type { PageInfo, Reply, Request } from '@/lib/messaging/types'
 import type { DetectedSource, FeatureId, ResearchDepth, ResultDoc, ReviewContext } from '@/lib/types'
-import { SAMPLES } from '@/lib/features/samples'
+import { SAMPLE_DEEP_COMPETITOR, SAMPLE_DEEP_VOICE, SAMPLES } from '@/lib/features/samples'
 import { getSettings } from '@/lib/storage/settings'
 import { getUserContext } from '@/lib/storage/profile'
 import { buildContextBlock } from '@/lib/context/contextBlock'
@@ -19,9 +19,17 @@ import {
   competitorSections,
   createDefaultOrchestrator,
   customerVoiceSections,
+  pmReviewAgentSections,
   reportToSections,
   type AgentContext,
+  type AgentResult,
+  type BuildDecision,
+  type CompetitorPayload,
+  type CustomerVoicePayload,
+  type PmReviewAgentPayload,
 } from '@/lib/agents'
+import { parseReadinessReview } from '@/lib/features/pmReview'
+import type { ReviewData, ReviewResultDoc } from '@/lib/review'
 import { addRunRecord, buildRunRecord } from '@/lib/storage/intelligence'
 
 // Open the side panel when the toolbar icon is clicked.
@@ -39,6 +47,35 @@ function errCode(e: unknown): string | undefined {
 }
 
 const DEPTH_USES: Record<ResearchDepth, number> = { quick: 3, standard: 8, deep: 15 }
+
+// --- Structured review view-model (tabbed results UI) ---
+
+/** Readiness review for a standalone PM Review run; undefined when the model
+ *  output didn't parse (UI then falls back to the flat card list). */
+function readinessReviewData(rawText: string): ReviewData | undefined {
+  try {
+    const { review } = parseReadinessReview(rawText)
+    const hasContent =
+      review.readiness != null ||
+      review.critical.length > 0 ||
+      review.medium.length > 0 ||
+      review.missingRequirements.length > 0
+    return hasContent ? { decision: review.decision, readiness: review, deep: false } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function agentData<T>(results: AgentResult[], agentId: string): T | undefined {
+  return results.find((r) => r.agentId === agentId && r.status === 'ok')?.data as T | undefined
+}
+
+const DEEP_DECISION_LABEL: Record<BuildDecision, string> = {
+  build: 'Build',
+  build_with_changes: 'Build with Changes',
+  validate_first: 'Validate First',
+  do_not_build: 'Do Not Build',
+}
 
 const CANNOT_READ =
   "Can't read this page. Open PM Co-Pilot via its toolbar icon on a normal web page (not a Chrome settings or extension page), then try again."
@@ -101,12 +138,13 @@ async function handleRunFeature(
     await new Promise((r) => setTimeout(r, 600)) // let the loading state show
     const sample = SAMPLES[featureId]
     const parsed = feature.parse(sample.text, sample.sources)
-    const result: ResultDoc = {
+    const result: ReviewResultDoc = {
       feature: feature.id,
       title: `${feature.label} (sample)`,
       sections: parsed.sections,
       sources: sample.sources.length ? sample.sources : undefined,
       copyText: parsed.copyText,
+      review: feature.id === 'pm_review' ? readinessReviewData(sample.text) : undefined,
     }
     await addHistory({
       id: newHistoryId(),
@@ -173,13 +211,14 @@ async function handleRunFeature(
     return { ok: false, error: 'The model returned an unexpected format. Please try again.' }
   }
 
-  const result: ResultDoc = {
+  const result: ReviewResultDoc = {
     feature: feature.id,
     title: feature.label,
     sections: parsed.sections,
     sources: gen.sources.length ? gen.sources : undefined,
     copyText: parsed.copyText,
     usage: gen.usage,
+    review: feature.id === 'pm_review' ? readinessReviewData(gen.text) : undefined,
   }
 
   await addHistory({
@@ -240,11 +279,25 @@ async function handleDeepReview(
     }
     await new Promise((r) => setTimeout(r, 700))
     const sections = reportToSections(DEMO_REPORT)
-    const result: ResultDoc = {
+    // Full structured sample (readiness + voice + competitor) so the demo shows
+    // the same tabbed review experience a live deep run produces.
+    const review: ReviewData = {
+      decision: DEEP_DECISION_LABEL[DEMO_REPORT.decision.recommendation],
+      readiness: readinessReviewData(SAMPLES.pm_review.text)?.readiness,
+      verdict: DEMO_REPORT.finalVerdict,
+      voice: SAMPLE_DEEP_VOICE,
+      competitor: SAMPLE_DEEP_COMPETITOR,
+      insights: SAMPLE_DEEP_COMPETITOR.landscape.whiteSpace
+        .slice(0, 4)
+        .map((w) => ({ text: w.opportunity, source: w.rationale })),
+      deep: true,
+    }
+    const result: ReviewResultDoc = {
       feature: 'pm_review',
       title: 'Deep Intelligence (sample)',
       sections,
       copyText: sectionsToCopyText('Deep Intelligence', sections),
+      review,
     }
     await addHistory({
       id: newHistoryId(),
@@ -271,7 +324,6 @@ async function handleDeepReview(
 
   const agentContext: AgentContext = {
     document: ctx.content,
-    productName: userContext.productName || undefined,
     industry: userContext.industry || undefined,
     featureName: reviewContext?.featureName || undefined,
     metadata: { userContext, reviewContext, source, clientId },
@@ -290,18 +342,35 @@ async function handleDeepReview(
     })
   }
 
-  // Synthesis decision first, then the real customer-evidence + competitor cards (quotes + links).
+  // Synthesis decision first, then PRD readiness, then the real customer-evidence
+  // + competitor cards (quotes + links). Sections remain the copy/fallback view;
+  // the tabbed UI renders from the structured `review` below.
   const sections = [
     ...reportToSections(out.report),
+    ...pmReviewAgentSections(out.results),
     ...customerVoiceSections(out.results),
     ...competitorSections(out.results),
   ]
-  const result: ResultDoc = {
+  const pmData = agentData<PmReviewAgentPayload>(out.results, 'pm_review')
+  const compData = agentData<CompetitorPayload>(out.results, 'competitor')
+  const review: ReviewData = {
+    decision: DEEP_DECISION_LABEL[out.report.decision.recommendation],
+    readiness: pmData?.review,
+    verdict: out.report.finalVerdict || out.report.executiveSummary || undefined,
+    voice: agentData<CustomerVoicePayload>(out.results, 'customer_voice'),
+    competitor: compData,
+    insights: compData?.landscape.whiteSpace
+      .slice(0, 4)
+      .map((w) => ({ text: w.opportunity, source: w.rationale })),
+    deep: true,
+  }
+  const result: ReviewResultDoc = {
     feature: 'pm_review',
     title: 'Deep Intelligence',
     sections,
     copyText: sectionsToCopyText('Deep Intelligence', sections),
     usage: out.usage,
+    review,
   }
 
   const ts = Date.now()

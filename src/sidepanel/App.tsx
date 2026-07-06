@@ -6,7 +6,9 @@ import { DEFAULT_SETTINGS, getSettings, setSettings } from '@/lib/storage/settin
 import { getAllowanceExhausted, setAllowanceExhausted } from '@/lib/storage/client'
 import { getOnboardingDismissed, isOnboarded } from '@/lib/storage/profile'
 import { config } from '@/lib/config'
+import { getReview } from '@/lib/review'
 import { SourceBadge } from './components/SourceBadge'
+import { ReviewResult } from './components/review/ReviewResult'
 import { ModeSelector } from './components/ModeSelector'
 import { DepthSelector } from './components/DepthSelector'
 import { FeatureButtons } from './components/FeatureButtons'
@@ -36,6 +38,8 @@ export default function App() {
   const [dismissed, setDismissed] = useState(false)
   const [pendingReview, setPendingReview] = useState(false)
   const [deepRunning, setDeepRunning] = useState(false)
+  // Pre-check the deep toggle when the modal opens from an empty-tab CTA.
+  const [deepDefault, setDeepDefault] = useState(false)
 
   const loadSettings = useCallback(async () => {
     try {
@@ -100,6 +104,7 @@ export default function App() {
     }
     // PM Review collects per-review context first; other features run directly.
     if (id === 'pm_review') {
+      setDeepDefault(false)
       setPendingReview(true)
       return
     }
@@ -168,6 +173,13 @@ export default function App() {
   const enableDemo = async () => setSettingsState(await setSettings({ demoMode: true }))
   const needsOnboarding = !onboarded && !dismissed
 
+  // Structured review of the visible result (null → legacy flat cards).
+  const activeReview = view === 'main' && !running && result ? getReview(result) : null
+  const openDeepModal = () => {
+    setDeepDefault(true)
+    setPendingReview(true)
+  }
+
   return (
     <div className="flex min-h-full flex-col bg-slate-50">
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/90 px-3 py-2 backdrop-blur">
@@ -181,6 +193,12 @@ export default function App() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {/* Persistent build decision — visible whatever tab is open. */}
+          {activeReview?.decision && (
+            <span className="mr-1 rounded-md bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white">
+              {activeReview.decision}
+            </span>
+          )}
           <button
             onClick={() => setView(view === 'history' ? 'main' : 'history')}
             className="rounded px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
@@ -196,7 +214,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 space-y-3 p-3">
+      <main className={`flex-1 space-y-3 p-3 ${activeReview ? 'pb-20' : ''}`}>
         {needsOnboarding ? (
           <Onboarding onDone={loadSettings} />
         ) : !config.hasBackend && !settings.apiKey && !demo ? (
@@ -252,13 +270,25 @@ export default function App() {
                 }
               />
             )}
-            {!running && result && <ResultView result={result} />}
+            {!running &&
+              result &&
+              (activeReview ? (
+                <ReviewResult
+                  result={result}
+                  review={activeReview}
+                  url={pageInfo?.url}
+                  onRunDeep={openDeepModal}
+                />
+              ) : (
+                <ResultView result={result} />
+              ))}
           </>
         )}
       </main>
 
       {pendingReview && (
         <ReviewContextModal
+          initialDeep={deepDefault}
           onCancel={() => setPendingReview(false)}
           onRun={(rc, deep) => {
             setPendingReview(false)

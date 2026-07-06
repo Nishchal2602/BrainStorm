@@ -18,6 +18,13 @@ const SCHEMA = {
     searchQueries: { type: 'array', items: { type: 'string' } },
     solutionCategory: { type: 'string' },
     keyCapabilities: { type: 'array', items: { type: 'string' } },
+    goals: { type: 'array', items: { type: 'string' } },
+    keyRequirements: { type: 'array', items: { type: 'string' } },
+    constraints: { type: 'array', items: { type: 'string' } },
+    workflowSummary: { type: 'string' },
+    differentiators: { type: 'array', items: { type: 'string' } },
+    architectureSummary: { type: 'string' },
+    successMetrics: { type: 'array', items: { type: 'string' } },
     confidence: { type: 'number' },
     rationale: { type: 'string' },
   },
@@ -33,6 +40,13 @@ const SCHEMA = {
     'searchQueries',
     'solutionCategory',
     'keyCapabilities',
+    'goals',
+    'keyRequirements',
+    'constraints',
+    'workflowSummary',
+    'differentiators',
+    'architectureSummary',
+    'successMetrics',
     'confidence',
     'rationale',
   ],
@@ -51,9 +65,19 @@ Problem extraction (look past the document's wording to the REAL user problem):
 - coreProblem: the concrete user problem in plain language (e.g. doc says "improve onboarding completion" → coreProblem "users abandon onboarding during identity verification").
 - persona: the primary affected user.
 - synonyms: 3–6 alternative phrasings real users would use (e.g. "KYC delay", "verification friction", "signup abandonment").
-- searchQueries: 4–6 concrete web-search queries to find real user discussions of this problem (favor terms users actually type).
+- searchQueries: 4–6 customer-vernacular search queries — the EXACT casual words frustrated users would type into Reddit/Google about this problem (complaints, not product names).
 - solutionCategory: the kind of solution the document proposes (e.g. "Enterprise AI Assistant", "Payments Onboarding"). "Unknown" if unclear.
 - keyCapabilities: 4–8 concrete capabilities the proposed solution depends on (e.g. "RAG", "knowledge graph", "role awareness", "enterprise search"). Capabilities, not benefits.
+
+Compact context (short — downstream agents read THIS instead of the document; empty when the document doesn't say):
+- goals: up to 5 short product/business goals.
+- keyRequirements: up to 5 of the most important functional requirements.
+- constraints: up to 5 constraints and explicit non-goals.
+- workflowSummary: 1–2 sentences on the core user workflow/journey the proposal changes.
+- differentiators: up to 4 things the document claims make this different.
+- architectureSummary: 1–2 sentences on how the solution is built/architected.
+- successMetrics: up to 4 success metrics the document defines.
+
 - confidence: 0..1 — how clearly the document states the problem. High (~0.9) when explicit and specific; low (~0.4) when vague (e.g. just "improve onboarding"). Be honest when you are guessing.
 - rationale: one sentence.`
 
@@ -69,6 +93,13 @@ const DEFAULT: DocumentAnalysis = {
   searchQueries: [],
   solutionCategory: 'Unknown',
   keyCapabilities: [],
+  goals: [],
+  keyRequirements: [],
+  constraints: [],
+  workflowSummary: '',
+  differentiators: [],
+  architectureSummary: '',
+  successMetrics: [],
   confidence: 0,
   rationale: 'Document analysis unavailable; used safe defaults.',
 }
@@ -101,7 +132,7 @@ export class DocumentAnalyzer {
         system: SYSTEM,
         user,
         schema: SCHEMA as object,
-        maxTokens: 700,
+        maxTokens: 1000,
         label: 'analyze',
         meta: ctx.metadata?.clientId ? { clientId: String(ctx.metadata.clientId) } : undefined,
       })
@@ -115,6 +146,11 @@ export class DocumentAnalyzer {
         synonyms: strArr(data.synonyms),
         searchQueries: strArr(data.searchQueries),
         keyCapabilities: strArr(data.keyCapabilities),
+        goals: strArr(data.goals).slice(0, 5),
+        keyRequirements: strArr(data.keyRequirements).slice(0, 5),
+        constraints: strArr(data.constraints).slice(0, 5),
+        differentiators: strArr(data.differentiators).slice(0, 4),
+        successMetrics: strArr(data.successMetrics).slice(0, 4),
         confidence: clamp01(data.confidence),
       }
       return { analysis, usage }

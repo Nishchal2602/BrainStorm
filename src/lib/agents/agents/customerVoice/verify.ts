@@ -1,7 +1,3 @@
-import type { TokenUsage } from '@/lib/types'
-import type { DocumentAnalysis } from '../../types'
-import type { LlmPort } from '../../llm'
-import type { Hypothesis } from './hypothesis'
 import type { DiscussionDoc, DiscussionUnit } from './types'
 
 const MAX_UNITS = 40
@@ -43,6 +39,44 @@ export function buildUnits(docs: DiscussionDoc[]): DiscussionUnit[] {
   return units
 }
 
+/**
+ * Hard cap on what enters the (single) validation prompt. Preserves relevance
+ * (docs arrive relevance-sorted; a doc's post precedes its comments) while
+ * spreading coverage across threads: round-robin one unit per doc, upvotes
+ * deciding order within a doc, until `max` is reached.
+ */
+export function selectTopUnitsForValidation(units: DiscussionUnit[], max = 24): DiscussionUnit[] {
+  if (units.length <= max) return units
+  // Group by doc, preserving doc order (= relevance order).
+  const byDoc = new Map<number, DiscussionUnit[]>()
+  for (const u of units) {
+    const arr = byDoc.get(u.docIndex) ?? []
+    arr.push(u)
+    byDoc.set(u.docIndex, arr)
+  }
+  // Within a doc: post first, then comments by upvotes.
+  for (const arr of byDoc.values()) {
+    arr.sort((a, b) => {
+      if (a.unitId === 'post') return -1
+      if (b.unitId === 'post') return 1
+      return b.score - a.score
+    })
+  }
+  const groups = [...byDoc.values()]
+  const out: DiscussionUnit[] = []
+  for (let round = 0; out.length < max; round++) {
+    let added = false
+    for (const g of groups) {
+      if (round < g.length && out.length < max) {
+        out.push(g[round])
+        added = true
+      }
+    }
+    if (!added) break
+  }
+  return out
+}
+
 export type Stance = 'supports' | 'contradicts' | 'unrelated'
 
 export interface Judgment {
@@ -59,97 +93,6 @@ export interface Judgment {
   evidenceStrength: number
   authorCredibility: number
   segment: string
-  reasoning: string
-}
-
-// Gemini responseSchema is an OpenAPI subset — no `additionalProperties`.
-const SCHEMA = {
-  type: 'object',
-  properties: {
-    judgments: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          unitIndex: { type: 'number' },
-          hypothesisId: { type: 'string' },
-          stance: { type: 'string', enum: ['supports', 'contradicts', 'unrelated'] },
-          quote: { type: 'string' },
-          problemMatch: { type: 'number' },
-          personaMatch: { type: 'number' },
-          productMatch: { type: 'number' },
-          evidenceStrength: { type: 'number' },
-          authorCredibility: { type: 'number' },
-          segment: { type: 'string' },
-          reasoning: { type: 'string' },
-        },
-        required: [
-          'unitIndex',
-          'hypothesisId',
-          'stance',
-          'quote',
-          'problemMatch',
-          'personaMatch',
-          'productMatch',
-          'evidenceStrength',
-          'authorCredibility',
-          'segment',
-          'reasoning',
-        ],
-      },
-    },
-  },
-  required: ['judgments'],
-} as const
-
-function systemPrompt(persona: string, domain: string): string {
-  return `You validate specific hypotheses against individual Reddit units (each unit is one post or one comment). For EACH unit, decide which ONE hypothesis (by id) it most directly addresses, then judge it.
-
-${persona ? `Target persona: ${persona}\n` : ''}${domain ? `Product domain: ${domain}\n` : ''}
-- stance: "supports" (the unit is evidence the hypothesis is TRUE), "contradicts" (evidence it is FALSE / the person does NOT have the problem), or "unrelated" (off-topic, or merely same broad topic). Same industry/topic is NOT relevance.
-- quote: copy a VERBATIM substring from THAT unit's text (exact characters) — never paraphrase or invent. If no verbatim sentence genuinely fits, mark the unit "unrelated".
-- problemMatch 0-10: how directly the unit describes the SPECIFIC problem in the hypothesis (not just the same area).
-- personaMatch 0-10: how well the author looks like the target persona/role above (use flair/role signals; ~5 if unknown, lower if clearly a different audience).
-- productMatch 0-10: whether it concerns the SAME product/domain above. A different domain (e.g. crypto onboarding vs bank onboarding vs university onboarding) scores LOW even if the wording is similar.
-- evidenceStrength 0-10: first-hand, specific lived experience (high) vs vague/second-hand (low).
-- authorCredibility 0-10: from the author's flair/role signals (practitioner/engineer/PM/founder/manager). ~5 if unknown.
-- segment: the author's role/segment if evident (e.g. "Software Engineer", "Product Manager", "Founder", "Marketer"); else "".
-You MAY omit units that are clearly unrelated. Be strict: precision over coverage.`
-}
-
-function renderUnits(units: DiscussionUnit[]): string {
-  return units
-    .map((u, i) => {
-      const who = u.author ? `by ${u.author}${u.authorFlair ? ` [${u.authorFlair}]` : ''}` : ''
-      return `[${i}] r/${u.subreddit} (▲${u.score}) ${who}\n${u.text}`
-    })
-    .join('\n\n')
-}
-
-/** Step 4: comment-level verification with multi-dimensional relevance —
- * one structured call over all units × hypotheses. */
-export async function verifyEvidence(
-  llm: LlmPort,
-  hypotheses: Hypothesis[],
-  units: DiscussionUnit[],
-  analysis?: DocumentAnalysis,
-  meta?: { clientId?: string },
-): Promise<{ judgments: Judgment[]; usage?: TokenUsage }> {
-  if (!hypotheses.length || !units.length) return { judgments: [] }
-  const list = hypotheses.map((h) => `${h.id}: ${h.statement}`).join('\n')
-  const domain = [analysis?.productCategory, analysis?.industry].filter(Boolean).join(' · ')
-  const user = `HYPOTHESES:\n${list}\n\nUNITS:\n${renderUnits(units)}`
-
-  const { data, usage } = await llm.generateStructured<{ judgments: Judgment[] }>({
-    system: systemPrompt(analysis?.persona ?? '', domain),
-    user,
-    schema: SCHEMA as object,
-    maxTokens: 3800,
-    label: 'customer_voice_verify',
-    meta,
-  })
-  const judgments = (Array.isArray(data?.judgments) ? data.judgments : []).filter(
-    (j) => j && j.stance !== 'unrelated' && typeof j.unitIndex === 'number',
-  )
-  return { judgments, usage }
+  /** Legacy-optional: never read by scoring; no longer requested from the model. */
+  reasoning?: string
 }

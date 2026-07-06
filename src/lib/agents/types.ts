@@ -38,6 +38,21 @@ export interface DocumentAnalysis {
   solutionCategory: string
   /** Concrete capabilities the proposal depends on (e.g. "RAG", "role awareness"). */
   keyCapabilities: string[]
+  // --- Compact structured context (replaces re-sending the document downstream) ---
+  /** Product/business goals the document states (≤5, short). */
+  goals: string[]
+  /** The most important functional requirements (≤5, short). */
+  keyRequirements: string[]
+  /** Constraints and explicit non-goals (≤5, short). */
+  constraints: string[]
+  /** One-two sentences: the core user workflow/journey the proposal changes. */
+  workflowSummary: string
+  /** What the document claims makes this different (≤4, short). */
+  differentiators: string[]
+  /** One-two sentences: how the solution is architected/built. */
+  architectureSummary: string
+  /** Success metrics the document defines (≤4, short). */
+  successMetrics: string[]
   /** 0..1 — how clearly the document states the problem (low ⇒ the analysis is guessing). */
   confidence: number
   rationale?: string
@@ -281,10 +296,11 @@ export interface SolutionCriticPayload {
   risks: string[]
   edgeCases: string[]
 }
-export interface PrdQualityPayload {
-  missingRequirements: string[]
-  missingMetrics: string[]
-  missingAcceptanceCriteria: string[]
+// --- PM Review: Staff-PM implementation-readiness reviewer ---
+/** Typed review + pre-built cards; the shared parser lives in features/pmReview. */
+export interface PmReviewAgentPayload {
+  review: import('@/lib/features/pmReview').ReadinessReview
+  sections: import('@/lib/types').Section[]
 }
 
 /** The recommendation-engine verdict — "what should I do?". */

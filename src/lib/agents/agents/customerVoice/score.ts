@@ -5,7 +5,7 @@ import type {
   HypothesisEvidence,
   HypothesisVerdict,
 } from '../../types'
-import type { Hypothesis } from './hypothesis'
+import type { Hypothesis } from './validate'
 import type { Judgment } from './verify'
 import type { DiscussionUnit } from './types'
 
