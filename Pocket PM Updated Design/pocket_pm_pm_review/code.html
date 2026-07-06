@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Pocket PM - PM Review</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary-fixed": "#141b2b",
+                        "on-primary": "#ffffff",
+                        "surface-container": "#edeeef",
+                        "on-tertiary": "#ffffff",
+                        "surface-dim": "#d9dadb",
+                        "outline-variant": "#c6c6cd",
+                        "surface-container-lowest": "#ffffff",
+                        "secondary-fixed-dim": "#adc6ff",
+                        "on-tertiary-container": "#968065",
+                        "on-secondary-fixed-variant": "#004395",
+                        "error-container": "#ffdad6",
+                        "tertiary-fixed-dim": "#dcc2a4",
+                        "on-secondary": "#ffffff",
+                        "inverse-primary": "#c0c6db",
+                        "tertiary-container": "#261906",
+                        "background": "#f8f9fa",
+                        "inverse-surface": "#2e3132",
+                        "primary-container": "#141b2b",
+                        "primary": "#000000",
+                        "on-primary-container": "#7d8497",
+                        "on-secondary-container": "#fefcff",
+                        "surface-tint": "#575e70",
+                        "secondary-container": "#2170e4",
+                        "on-error-container": "#93000a",
+                        "secondary": "#0058be",
+                        "secondary-fixed": "#d8e2ff",
+                        "surface-container-highest": "#e1e3e4",
+                        "on-tertiary-fixed-variant": "#55442d",
+                        "on-secondary-fixed": "#001a42",
+                        "primary-fixed-dim": "#c0c6db",
+                        "surface": "#f8f9fa",
+                        "on-error": "#ffffff",
+                        "on-tertiary-fixed": "#261906",
+                        "error": "#ba1a1a",
+                        "surface-bright": "#f8f9fa",
+                        "primary-fixed": "#dce2f7",
+                        "surface-variant": "#e1e3e4",
+                        "tertiary": "#000000",
+                        "surface-container-high": "#e7e8e9",
+                        "on-surface-variant": "#45464c",
+                        "on-background": "#191c1d",
+                        "outline": "#76777d",
+                        "on-surface": "#191c1d",
+                        "surface-container-low": "#f3f4f5",
+                        "on-primary-fixed-variant": "#404758",
+                        "tertiary-fixed": "#f9debf",
+                        "inverse-on-surface": "#f0f1f2"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "stack-gap": "8px",
+                        "panel-padding": "12px",
+                        "element-gap": "4px",
+                        "section-margin": "16px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "meta-mono": ["JetBrains Mono"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["11px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "700" }],
+                        "headline-sm": ["16px", { "lineHeight": "24px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-sm": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "meta-mono": ["12px", { "lineHeight": "16px", "fontWeight": "500" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        /* Hide scrollbar for clean panel look */
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body-md flex justify-center w-full min-h-screen m-0 p-0 overflow-x-hidden">
+<!-- Panel Container -->
+<div class="w-full max-w-[400px] h-screen flex flex-col relative bg-surface border-x border-outline-variant/30">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full h-12 flex justify-between items-center px-panel-padding max-w-[400px] bg-surface border-b border-outline-variant z-50">
+<div class="flex items-center gap-element-gap text-primary">
+<span class="material-symbols-outlined text-[20px]">architecture</span>
+<span class="font-headline-sm text-headline-sm font-bold tracking-tight">Pocket PM</span>
+</div>
+<button class="h-[28px] px-3 bg-primary text-on-primary font-label-caps text-label-caps rounded flex items-center justify-center hover:opacity-90 transition-opacity">
+                Build with Changes
+            </button>
+</header>
+<!-- Main Canvas -->
+<main class="flex-1 overflow-y-auto mt-12 mb-14 p-panel-padding flex flex-col gap-section-margin">
+<!-- Decision Summary Card -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-3 flex flex-col gap-2">
+<div class="flex justify-between items-center">
+<span class="font-headline-sm text-headline-sm text-on-surface">Decision Confidence</span>
+<div class="flex items-center gap-1 text-primary">
+<span class="material-symbols-outlined text-[18px]">verified</span>
+<span class="font-meta-mono text-meta-mono">65/100</span>
+</div>
+</div>
+<div class="w-full h-1 bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[65%] rounded-full"></div>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">The current PRD lacks sufficient detail on adaptive algorithms and handling edge cases for offline functionality.</p>
+</div>
+<!-- Functional Specs (Expanded) -->
+<section class="flex flex-col border border-outline-variant rounded-lg bg-surface-container-lowest overflow-hidden">
+<button class="flex items-center justify-between w-full p-3 bg-surface hover:bg-surface-container-highest transition-colors text-left border-b border-outline-variant">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant">keyboard_arrow_down</span>
+<span class="font-headline-sm text-headline-sm text-on-surface">Functional Specs</span>
+</div>
+<span class="font-meta-mono text-meta-mono text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">3 Issues</span>
+</button>
+<div class="flex flex-col">
+<!-- Item 1 -->
+<div class="p-3 border-b border-outline-variant flex flex-col gap-2 last:border-b-0 hover:bg-surface-container-low transition-colors">
+<div class="flex justify-between items-start gap-2">
+<span class="font-meta-mono text-meta-mono text-error bg-error-container/20 px-1.5 py-0.5 rounded uppercase tracking-wider">Missing from PRD</span>
+<div class="flex gap-1">
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1"><span class="material-symbols-outlined text-[16px]">thumb_up</span></button>
+<button class="text-on-surface-variant hover:text-error transition-colors p-1"><span class="material-symbols-outlined text-[16px]">thumb_down</span></button>
+</div>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface">System must regenerate entire workout plan dynamically if user misses &gt;3 days, considering muscle fatigue decay.</p>
+</div>
+<!-- Item 2 -->
+<div class="p-3 border-b border-outline-variant flex flex-col gap-2 last:border-b-0 hover:bg-surface-container-low transition-colors">
+<div class="flex justify-between items-start gap-2">
+<span class="font-meta-mono text-meta-mono text-secondary bg-secondary-container/20 px-1.5 py-0.5 rounded uppercase tracking-wider">Needs Clarification</span>
+<div class="flex gap-1">
+<button class="text-on-surface-variant hover:text-primary transition-colors p-1"><span class="material-symbols-outlined text-[16px]">thumb_up</span></button>
+<button class="text-on-surface-variant hover:text-error transition-colors p-1"><span class="material-symbols-outlined text-[16px]">thumb_down</span></button>
+</div>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface">"Real-time adaptation" - Does this mean during the set, between sets, or after the workout completes?</p>
+</div>
+</div>
+</section>
+<!-- Non-Functional Specs (Collapsed) -->
+<section class="flex flex-col border border-outline-variant rounded-lg bg-surface-container-lowest overflow-hidden">
+<button class="flex items-center justify-between w-full p-3 bg-surface hover:bg-surface-container-highest transition-colors text-left">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant">chevron_right</span>
+<span class="font-headline-sm text-headline-sm text-on-surface">Non-Functional Specs</span>
+</div>
+<span class="font-meta-mono text-meta-mono text-on-surface-variant">All Clear</span>
+</button>
+</section>
+<!-- Unmapped Requirements -->
+<section class="flex flex-col border border-outline-variant rounded-lg bg-surface-container-lowest overflow-hidden">
+<div class="flex items-center justify-between w-full p-3 bg-surface border-b border-outline-variant">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-secondary">explore</span>
+<span class="font-headline-sm text-headline-sm text-on-surface">Unmapped Insights</span>
+</div>
+</div>
+<div class="p-3 flex flex-col gap-stack-gap bg-surface-container-lowest">
+<p class="font-body-sm text-body-sm text-on-surface-variant">Extracted from competitor analysis &amp; user transcripts.</p>
+<div class="bg-surface p-2 rounded border border-outline-variant/50 border-l-2 border-l-secondary">
+<p class="font-body-sm text-body-sm text-on-surface mb-1">Hardware integration for auto-logging weights.</p>
+<span class="font-meta-mono text-meta-mono text-on-surface-variant opacity-70">Source: Speediance Smart Gym</span>
+</div>
+<div class="bg-surface p-2 rounded border border-outline-variant/50 border-l-2 border-l-secondary">
+<p class="font-body-sm text-body-sm text-on-surface mb-1">Voice-guided real-time set adjustments.</p>
+<span class="font-meta-mono text-meta-mono text-on-surface-variant opacity-70">Source: Ray AI</span>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full max-w-[400px] flex justify-around items-center px-element-gap bg-surface-container-low border-t border-outline-variant z-50 h-14">
+<button class="flex flex-col items-center justify-center text-secondary font-bold scale-95 transition-transform w-24">
+<span class="material-symbols-outlined mb-0.5" style="font-variation-settings: 'FILL' 1;">fact_check</span>
+<span class="font-label-caps text-label-caps">PM Review</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant opacity-70 hover:text-primary hover:opacity-100 transition-all w-24">
+<span class="material-symbols-outlined mb-0.5">analytics</span>
+<span class="font-label-caps text-label-caps">Competitor</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant opacity-70 hover:text-primary hover:opacity-100 transition-all w-24">
+<span class="material-symbols-outlined mb-0.5">forum</span>
+<span class="font-label-caps text-label-caps">Voice</span>
+</button>
+</nav>
+</div>
+</body></html>

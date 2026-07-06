@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Competitor Analysis - Pocket PM</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary-fixed": "#141b2b",
+                        "on-primary": "#ffffff",
+                        "surface-container": "#edeeef",
+                        "on-tertiary": "#ffffff",
+                        "surface-dim": "#d9dadb",
+                        "outline-variant": "#c6c6cd",
+                        "surface-container-lowest": "#ffffff",
+                        "secondary-fixed-dim": "#adc6ff",
+                        "on-tertiary-container": "#968065",
+                        "on-secondary-fixed-variant": "#004395",
+                        "error-container": "#ffdad6",
+                        "tertiary-fixed-dim": "#dcc2a4",
+                        "on-secondary": "#ffffff",
+                        "inverse-primary": "#c0c6db",
+                        "tertiary-container": "#261906",
+                        "background": "#f8f9fa",
+                        "inverse-surface": "#2e3132",
+                        "primary-container": "#141b2b",
+                        "primary": "#000000",
+                        "on-primary-container": "#7d8497",
+                        "on-secondary-container": "#fefcff",
+                        "surface-tint": "#575e70",
+                        "secondary-container": "#2170e4",
+                        "on-error-container": "#93000a",
+                        "secondary": "#0058be",
+                        "secondary-fixed": "#d8e2ff",
+                        "surface-container-highest": "#e1e3e4",
+                        "on-tertiary-fixed-variant": "#55442d",
+                        "on-secondary-fixed": "#001a42",
+                        "primary-fixed-dim": "#c0c6db",
+                        "surface": "#f8f9fa",
+                        "on-error": "#ffffff",
+                        "on-tertiary-fixed": "#261906",
+                        "error": "#ba1a1a",
+                        "surface-bright": "#f8f9fa",
+                        "primary-fixed": "#dce2f7",
+                        "surface-variant": "#e1e3e4",
+                        "tertiary": "#000000",
+                        "surface-container-high": "#e7e8e9",
+                        "on-surface-variant": "#45464c",
+                        "on-background": "#191c1d",
+                        "outline": "#76777d",
+                        "on-surface": "#191c1d",
+                        "surface-container-low": "#f3f4f5",
+                        "on-primary-fixed-variant": "#404758",
+                        "tertiary-fixed": "#f9debf",
+                        "inverse-on-surface": "#f0f1f2"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "stack-gap": "8px",
+                        "panel-padding": "12px",
+                        "element-gap": "4px",
+                        "section-margin": "16px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "meta-mono": ["JetBrains Mono"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["11px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "700" }],
+                        "headline-sm": ["16px", { "lineHeight": "24px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-sm": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "meta-mono": ["12px", { "lineHeight": "16px", "fontWeight": "500" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: transparent; } /* Chrome extension transparent bg */
+        .panel-container { width: 400px; height: 100vh; background-color: #f8f9fa; display: flex; flex-direction: column; border-left: 1px solid #e1e3e4; }
+        .scrollable-content { flex-grow: 1; overflow-y: auto; padding-bottom: 72px; /* space for bottom nav */ padding-top: 48px; /* space for top nav */ }
+        /* Hide scrollbar for Chrome, Safari and Opera */
+        .scrollable-content::-webkit-scrollbar { display: none; }
+        /* Hide scrollbar for IE, Edge and Firefox */
+        .scrollable-content { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="flex justify-end text-on-surface font-body-sm">
+<div class="panel-container relative">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full h-12 flex items-center justify-between px-panel-padding max-w-[400px] bg-surface z-50">
+<div class="flex items-center gap-2 text-primary">
+<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 0;">architecture</span>
+<h1 class="font-headline-sm text-headline-sm font-bold tracking-tight">Pocket PM</h1>
+</div>
+<button class="h-8 px-3 bg-primary text-on-primary rounded font-meta-mono text-meta-mono flex items-center gap-1 hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined text-[16px]">build</span>
+                Build with Changes
+            </button>
+</header>
+<!-- Main Content Canvas -->
+<main class="scrollable-content px-panel-padding flex flex-col gap-section-margin">
+<!-- Breadcrumbs -->
+<div class="flex items-center gap-1 text-on-surface-variant font-meta-mono text-meta-mono pt-2">
+<span>Projects</span>
+<span class="material-symbols-outlined text-[14px]">chevron_right</span>
+<span>Adaptive AI Training System</span>
+</div>
+<!-- Header Section -->
+<section class="flex flex-col gap-stack-gap">
+<h2 class="font-headline-sm text-headline-sm text-primary">Competitor Landscape</h2>
+<p class="font-body-sm text-on-surface-variant">Analysis of 7 direct and 2 adjacent competitors in the AI fitness space.</p>
+<!-- Bento Stats -->
+<div class="grid grid-cols-2 gap-2 mt-1">
+<div class="border border-outline-variant rounded-lg p-2 bg-surface-container-lowest flex flex-col gap-1">
+<span class="font-meta-mono text-meta-mono text-on-surface-variant uppercase">Differentiation</span>
+<div class="flex items-end gap-1">
+<span class="font-headline-sm text-headline-sm">56/100</span>
+<span class="font-label-caps text-label-caps text-[#b45309] bg-[#fef3c7] px-1 rounded">Medium</span>
+</div>
+</div>
+<div class="border border-outline-variant rounded-lg p-2 bg-surface-container-lowest flex flex-col gap-1">
+<span class="font-meta-mono text-meta-mono text-on-surface-variant uppercase">Market Crowding</span>
+<div class="flex items-end gap-1">
+<span class="font-headline-sm text-headline-sm">High</span>
+<span class="font-label-caps text-label-caps text-[#be123c] bg-[#ffe4e6] px-1 rounded">7 Direct</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Direct Competitors Accordion (Expanded) -->
+<section class="border border-[#ef4444] rounded-lg bg-surface-container-lowest overflow-hidden border-l-4">
+<div class="flex items-center justify-between p-3 border-b border-outline-variant bg-surface cursor-pointer">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant">expand_more</span>
+<h3 class="font-headline-sm text-headline-sm">Direct competitors</h3>
+<span class="font-meta-mono text-[10px] bg-secondary-fixed text-on-secondary-fixed px-1.5 rounded">Competitor</span>
+</div>
+<div class="flex gap-1">
+<button class="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-container transition-colors"><span class="material-symbols-outlined text-[16px] text-on-surface-variant">thumb_up</span></button>
+<button class="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-container transition-colors"><span class="material-symbols-outlined text-[16px] text-on-surface-variant">thumb_down</span></button>
+</div>
+</div>
+<div class="flex flex-col">
+<!-- Item 1 -->
+<div class="p-3 border-b border-outline-variant last:border-b-0 flex flex-col gap-1">
+<div class="flex items-center gap-2">
+<span class="font-meta-mono text-meta-mono font-bold text-primary">Fitbod</span>
+<span class="font-meta-mono text-[10px] text-on-surface-variant bg-surface-container px-1 rounded">100% Match</span>
+</div>
+<p class="font-body-sm text-on-surface leading-snug">Personalized Strength Training Program Generation · The Algorithm Considers Workout History, Available Equipment — Offers AI-powered personalized strength training programs that adapt based on workout history and recovery, directly addressing consistent progression.</p>
+</div>
+<!-- Item 2 -->
+<div class="p-3 border-b border-outline-variant last:border-b-0 flex flex-col gap-1">
+<div class="flex items-center gap-2">
+<span class="font-meta-mono text-meta-mono font-bold text-primary">SHRED</span>
+<span class="font-meta-mono text-[10px] text-on-surface-variant bg-surface-container px-1 rounded">100% Match</span>
+</div>
+<p class="font-body-sm text-on-surface leading-snug">AI-Personalized Elite Training Plans · Hand-Built By Elite Coaches And Then Uses An Adaptive AI Eng — Provides AI-personalized elite training plans that adapt to individual goals and tune parameters in real-time, aiming for progress.</p>
+</div>
+<!-- Item 3 -->
+<div class="p-3 border-b border-outline-variant last:border-b-0 flex flex-col gap-1">
+<div class="flex items-center gap-2">
+<span class="font-meta-mono text-meta-mono font-bold text-primary">FitnessAI</span>
+<span class="font-meta-mono text-[10px] text-on-surface-variant bg-surface-container px-1 rounded">100% Match</span>
+</div>
+<p class="font-body-sm text-on-surface leading-snug">AI-powered Strength Training Workouts · Uses An Algorithm Based On Millions Of Completed Workouts To — Delivers AI-powered workouts tailored to experience and goals, adjusting intensity based on performance to optimize muscle growth and recovery.</p>
+</div>
+</div>
+</section>
+<!-- Adjacent Products Accordion (Collapsed) -->
+<section class="border border-[#3b82f6] rounded-lg bg-surface-container-lowest overflow-hidden border-l-4">
+<div class="flex items-center justify-between p-3 cursor-pointer hover:bg-surface transition-colors">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant transform -rotate-90">expand_more</span>
+<h3 class="font-headline-sm text-headline-sm">Adjacent products</h3>
+<span class="font-meta-mono text-[10px] bg-secondary-fixed text-on-secondary-fixed px-1.5 rounded">Competitor</span>
+</div>
+<span class="font-meta-mono text-meta-mono text-on-surface-variant">2 items</span>
+</div>
+</section>
+<!-- Strategic White Space Accordion (Collapsed) -->
+<section class="border border-[#8b5cf6] rounded-lg bg-surface-container-lowest overflow-hidden border-l-4">
+<div class="flex items-center justify-between p-3 cursor-pointer hover:bg-surface transition-colors">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant transform -rotate-90">expand_more</span>
+<h3 class="font-headline-sm text-headline-sm">Strategic white space</h3>
+<span class="font-meta-mono text-[10px] bg-secondary-fixed text-on-secondary-fixed px-1.5 rounded">Competitor</span>
+</div>
+<span class="font-meta-mono text-meta-mono text-on-surface-variant">3 items</span>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full max-w-[400px] flex justify-around items-center px-element-gap h-14 bg-surface-container border-t border-outline-variant z-50">
+<a class="flex flex-col items-center justify-center text-on-surface-variant opacity-70 hover:text-primary transition-all w-1/3" href="#">
+<span class="material-symbols-outlined text-[24px] mb-0.5">fact_check</span>
+<span class="font-label-caps text-[10px]">PM Review</span>
+</a>
+<a class="flex flex-col items-center justify-center text-secondary font-bold scale-95 transition-transform w-1/3" href="#">
+<div class="px-4 py-1 rounded-full bg-secondary-fixed/50 mb-0.5 flex items-center justify-center">
+<span class="material-symbols-outlined text-[24px]" style="font-variation-settings: 'FILL' 1;">analytics</span>
+</div>
+<span class="font-label-caps text-[10px]">Competitor</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant opacity-70 hover:text-primary transition-all w-1/3" href="#">
+<span class="material-symbols-outlined text-[24px] mb-0.5">forum</span>
+<span class="font-label-caps text-[10px]">Voice</span>
+</a>
+</nav>
+</div>
+</body></html>
