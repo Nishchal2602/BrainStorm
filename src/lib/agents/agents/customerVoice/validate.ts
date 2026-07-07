@@ -87,7 +87,7 @@ const SCHEMA = {
   required: ['hypotheses', 'judgments'],
 } as const
 
-function systemPrompt(persona: string, domain: string): string {
+export function validateSystemPrompt(persona: string, domain: string): string {
   return `You are a product researcher validating a product's assumptions against real user discussions, in ONE pass.
 
 STEP 1 — CLAIMS. From the PRODUCT CONTEXT, extract 5–7 DISTINCT falsifiable claims (assumptions about what users actually experience, want, or do), phrased so a real discussion could clearly SUPPORT or CONTRADICT each. Extract the assumption BEHIND the wording (doc says "AI lacks company context" → claim "Users repeatedly re-supply company context to AI tools"). GROUP similar claims into one — never output rephrasings of the same root assumption. Return ONLY the final grouped claims, no intermediate variants.
@@ -185,7 +185,7 @@ export async function validateClaims(
       hypotheses: Hypothesis[]
       judgments: Judgment[]
     }>({
-      system: systemPrompt(analysis?.persona ?? '', domain),
+      system: validateSystemPrompt(analysis?.persona ?? '', domain),
       user,
       schema: SCHEMA as object,
       maxTokens: 4200,

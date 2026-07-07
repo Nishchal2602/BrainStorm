@@ -1,4 +1,5 @@
 import type { CustomerVoiceHypothesis, CustomerVoicePayload } from '@/lib/agents/types'
+import { claimSource } from '@/lib/analytics'
 import { Accordion, Chip, EmptyState, Thumbs, type ChipTone } from './bits'
 
 // Voice pane: Final Verdict → validation counters → one accordion per claim.
@@ -23,7 +24,7 @@ function Counter({ icon, count, label, color }: { icon: string; count: number; l
   )
 }
 
-function Claim({ h, index, url }: { h: CustomerVoiceHypothesis; index: number; url?: string }) {
+function Claim({ h, index, reviewId, url }: { h: CustomerVoiceHypothesis; index: number; reviewId?: string; url?: string }) {
   const v = VERDICT[h.verdict]
   const quotes = h.supporting.slice(0, 3)
   return (
@@ -39,7 +40,7 @@ function Claim({ h, index, url }: { h: CustomerVoiceHypothesis; index: number; u
       <div className="px-3 py-2.5">
         <div className="flex items-start justify-between gap-2">
           <p className="text-[13px] leading-snug text-slate-800">{h.statement}</p>
-          <Thumbs itemKey={`claim:${index}:${h.id}`} feature="customer_voice" url={url} />
+          <Thumbs source={claimSource(h)} reviewId={reviewId} url={url} />
         </div>
         <p className="mt-1.5 font-mono text-[10px] text-slate-400">
           Evidence quality: {h.evidenceQuality} · {h.sourceBreadth.distinctThreads} threads ·{' '}
@@ -78,11 +79,13 @@ function Claim({ h, index, url }: { h: CustomerVoiceHypothesis; index: number; u
 export function VoiceTab({
   voice,
   verdict,
+  reviewId,
   url,
   onRunDeep,
 }: {
   voice?: CustomerVoicePayload
   verdict?: string
+  reviewId?: string
   url?: string
   onRunDeep: () => void
 }) {
@@ -104,7 +107,7 @@ export function VoiceTab({
         <section className="rounded-lg border border-slate-200 border-l-4 border-l-emerald-500 bg-white p-3">
           <div className="flex items-start justify-between gap-2">
             <h3 className="text-[15px] font-bold tracking-tight text-slate-900">Final Verdict</h3>
-            <Thumbs itemKey="voice:final-verdict" feature="customer_voice" url={url} />
+            <Thumbs source={{ agent: 'customer_voice', category: 'verdict', title: 'Final Verdict' }} reviewId={reviewId} url={url} />
           </div>
           <p className="mt-1 text-xs leading-relaxed text-slate-600">{verdict}</p>
         </section>
@@ -132,7 +135,7 @@ export function VoiceTab({
 
       {/* Claims */}
       {voice.hypotheses.map((h, i) => (
-        <Claim key={h.id || i} h={h} index={i} url={url} />
+        <Claim key={h.id || i} h={h} index={i} reviewId={reviewId} url={url} />
       ))}
     </div>
   )

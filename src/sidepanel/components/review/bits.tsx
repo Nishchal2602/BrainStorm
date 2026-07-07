@@ -1,5 +1,19 @@
 import { useState, type ReactNode } from 'react'
-import { recordFeedback } from '@/lib/storage/feedback'
+import { recordFeedbackEvent } from '@/lib/storage/feedback'
+import { findingIdFor, type FindingSource } from '@/lib/analytics'
+import { getClientId } from '@/lib/storage/client'
+
+/** Side-panel-lifetime session id — stamped on every feedback event. */
+const PANEL_SESSION_ID =
+  typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `s_${Date.now()}`
+
+function extVersion(): string {
+  try {
+    return chrome.runtime.getManifest().version
+  } catch {
+    return 'unknown'
+  }
+}
 
 // Shared primitives for the tabbed review UI. Density per the design system:
 // 1px slate dividers over shadows, mono uppercase chips, weight-based hierarchy.
@@ -26,13 +40,38 @@ export function Chip({ tone, children }: { tone: ChipTone; children: ReactNode }
   )
 }
 
-/** Subtle 👍/👎 pair, top-right of a review item. Fire-and-forget persistence. */
-export function Thumbs({ itemKey, feature, url }: { itemKey: string; feature: string; url?: string }) {
+/** Subtle 👍/👎 pair, top-right of a review item. Emits an immutable feedback
+ * event whose findingId is content-derived (findingIdFor) — so it joins the
+ * FindingRecord the service worker persisted for the same source. */
+export function Thumbs({
+  source,
+  reviewId,
+  url,
+}: {
+  source: FindingSource
+  reviewId?: string
+  url?: string
+}) {
   const [vote, setVote] = useState<'up' | 'down' | null>(null)
 
   const cast = (v: 'up' | 'down') => {
     setVote(v)
-    recordFeedback({ key: itemKey, vote: v, feature, url }).catch(() => {})
+    if (!reviewId) return
+    void getClientId()
+      .catch(() => undefined)
+      .then((clientId) =>
+        recordFeedbackEvent({
+          findingId: findingIdFor(source),
+          reviewId,
+          action: v === 'up' ? 'thumbs_up' : 'thumbs_down',
+          agent: source.agent,
+          extensionVersion: extVersion(),
+          clientId,
+          sessionId: PANEL_SESSION_ID,
+          url,
+        }),
+      )
+      .catch(() => {})
   }
 
   const cls = (active: boolean) =>

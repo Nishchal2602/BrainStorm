@@ -98,7 +98,7 @@ export function buildProblemQueries(analysis: DocumentAnalysis | undefined): str
   return deduped
 }
 
-const SYSTEM = `You are a senior product manager doing competitive research with web search, in ONE pass: first DISCOVER the real products that solve the SAME CUSTOMER JOB as the proposal, then REASON about the market like a strategy consultant. Use ONLY real results from your web search — never invent products, URLs, capabilities, or quotes.
+export const COMPETITOR_SYSTEM = `You are a senior product manager doing competitive research with web search, in ONE pass: first DISCOVER the real products that solve the SAME CUSTOMER JOB as the proposal, then REASON about the market like a strategy consultant. Use ONLY real results from your web search — never invent products, URLs, capabilities, or quotes.
 
 PART 1 — DISCOVERED COMPETITORS. Understand each competitor as Job → Positioning → Architecture → Capabilities (NOT capabilities first). Output STRICT plain text in EXACTLY this format:
 
@@ -368,8 +368,8 @@ export async function discoverAndReason(
   analysis: DocumentAnalysis | undefined,
   queries: string[],
   meta?: { clientId?: string },
-): Promise<{ raw: RawLandscape; reasoning: ReasoningResult | null; sources: SourceRef[]; usage?: TokenUsage }> {
-  if (!queries.length) return { raw: { competitors: [] }, reasoning: null, sources: [] }
+): Promise<{ raw: RawLandscape; reasoning: ReasoningResult | null; rawText: string; sources: SourceRef[]; usage?: TokenUsage }> {
+  if (!queries.length) return { raw: { competitors: [] }, reasoning: null, rawText: '', sources: [] }
   const context = compactContext(analysis)
   const user = [
     context,
@@ -379,12 +379,12 @@ export async function discoverAndReason(
     .join('\n\n')
 
   const { text, sources, usage } = await llm.generateText({
-    system: SYSTEM,
+    system: COMPETITOR_SYSTEM,
     user,
     webSearch: { maxUses: MAX_USES },
     maxTokens: MAX_TOKENS,
     label: 'competitor_discover_reason',
     meta,
   })
-  return { raw: parseLandscape(text), reasoning: parseMarketReasoning(text), sources, usage }
+  return { raw: parseLandscape(text), reasoning: parseMarketReasoning(text), rawText: text, sources, usage }
 }

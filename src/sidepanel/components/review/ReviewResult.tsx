@@ -83,10 +83,14 @@ export function ReviewResult({
         </button>
       </div>
 
-      {tab === 'review' && <ReviewTab readiness={review.readiness} insights={review.insights} url={url} />}
-      {tab === 'competitor' && <CompetitorTab competitor={review.competitor} url={url} onRunDeep={onRunDeep} />}
+      {tab === 'review' && (
+        <ReviewTab readiness={review.readiness} insights={review.insights} reviewId={review.reviewId} url={url} />
+      )}
+      {tab === 'competitor' && (
+        <CompetitorTab competitor={review.competitor} reviewId={review.reviewId} url={url} onRunDeep={onRunDeep} />
+      )}
       {tab === 'voice' && (
-        <VoiceTab voice={review.voice} verdict={review.verdict} url={url} onRunDeep={onRunDeep} />
+        <VoiceTab voice={review.voice} verdict={review.verdict} reviewId={review.reviewId} url={url} onRunDeep={onRunDeep} />
       )}
 
       {/* Fixed bottom tab bar — always visible while a review is open. */}

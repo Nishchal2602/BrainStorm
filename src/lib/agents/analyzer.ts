@@ -52,7 +52,7 @@ const SCHEMA = {
   ],
 } as const
 
-const SYSTEM = `You analyze a PRD/product document in ONE pass — classify it AND extract the real underlying problem with a web-search plan. Be concise; base everything on the document, never invent specifics.
+export const ANALYZE_SYSTEM = `You analyze a PRD/product document in ONE pass — classify it AND extract the real underlying problem with a web-search plan. Be concise; base everything on the document, never invent specifics.
 
 Classification:
 - industry: market served (e.g. "Fintech", "Healthcare", "SaaS", "E-commerce", "Consumer"). "Unknown" if unclear.
@@ -129,7 +129,7 @@ export class DocumentAnalyzer {
 
     try {
       const { data, usage } = await this.llm.generateStructured<DocumentAnalysis>({
-        system: SYSTEM,
+        system: ANALYZE_SYSTEM,
         user,
         schema: SCHEMA as object,
         maxTokens: 1000,

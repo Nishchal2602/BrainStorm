@@ -16,6 +16,9 @@ export interface ProductInsight {
 }
 
 export interface ReviewData {
+  /** Analytics review id (minted in the SW). Links UI feedback events to the
+   * persisted ReviewRecord + FindingRecords. */
+  reviewId?: string
   /** Header badge label, e.g. "Build with Changes" / "Validate First". */
   decision?: string
   /** PM Review tab — the Staff-PM implementation-readiness review. */

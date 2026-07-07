@@ -1,25 +1,56 @@
 import type { ReactNode } from 'react'
 import type { ReadinessIssue, ReadinessReview } from '@/lib/features/pmReview'
 import type { ProductInsight } from '@/lib/review'
+import type { FindingSource } from '@/lib/analytics'
 import { Accordion, Chip, Thumbs, firstSentence, type ChipTone } from './bits'
 
 // PM Review pane: Decision Confidence → Functional Specs (accordion of chip
 // rows) → Non-Functional Specs → Strengths → Product Opportunities.
 // Hierarchy: decision dominates; issues are compact rows; detail is nested.
+// Each thumbable row carries a FindingSource so its feedback event joins the
+// FindingRecord the service worker persisted for the same source.
 
-function Row({ chip, tone, itemKey, url, children }: { chip: string; tone: ChipTone; itemKey: string; url?: string; children: ReactNode }) {
+function Row({
+  chip,
+  tone,
+  source,
+  reviewId,
+  url,
+  children,
+}: {
+  chip: string
+  tone: ChipTone
+  source: FindingSource
+  reviewId?: string
+  url?: string
+  children: ReactNode
+}) {
   return (
     <div className="px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
         <Chip tone={tone}>{chip}</Chip>
-        <Thumbs itemKey={itemKey} feature="pm_review" url={url} />
+        <Thumbs source={source} reviewId={reviewId} url={url} />
       </div>
       <div className="mt-1.5">{children}</div>
     </div>
   )
 }
 
-function IssueRow({ issue, chip, tone, itemKey, url }: { issue: ReadinessIssue; chip: string; tone: ChipTone; itemKey: string; url?: string }) {
+function IssueRow({
+  issue,
+  chip,
+  tone,
+  category,
+  reviewId,
+  url,
+}: {
+  issue: ReadinessIssue
+  chip: string
+  tone: ChipTone
+  category: string
+  reviewId?: string
+  url?: string
+}) {
   const details = [
     issue.where && (['Where', issue.where] as const),
     issue.impact && (['Impact', issue.impact] as const),
@@ -28,7 +59,7 @@ function IssueRow({ issue, chip, tone, itemKey, url }: { issue: ReadinessIssue; 
   ].filter(Boolean) as ReadonlyArray<readonly [string, string]>
 
   return (
-    <Row chip={chip} tone={tone} itemKey={itemKey} url={url}>
+    <Row chip={chip} tone={tone} source={{ agent: 'pm_review', category, title: issue.title }} reviewId={reviewId} url={url}>
       <p className="text-[13px] leading-snug text-slate-800">{issue.title}</p>
       {issue.why && <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{issue.why}</p>}
       {details.length > 0 && (
@@ -55,10 +86,12 @@ function IssueRow({ issue, chip, tone, itemKey, url }: { issue: ReadinessIssue; 
 export function ReviewTab({
   readiness,
   insights,
+  reviewId,
   url,
 }: {
   readiness?: ReadinessReview
   insights?: ProductInsight[]
+  reviewId?: string
   url?: string
 }) {
   if (!readiness) {
@@ -72,15 +105,16 @@ export function ReviewTab({
   const r = readiness
 
   // Functional = issues + non-NFR gaps + questions; NFRs get their own section.
+  // category strings match analytics.buildFindingRecords so ids join.
   const missingFunctional = [
-    ...r.missingRequirements.map((t, i) => ({ t, k: `miss-req-${i}` })),
-    ...r.missingUserFlows.map((t, i) => ({ t, k: `miss-flow-${i}` })),
-    ...r.missingEdgeCases.map((t, i) => ({ t, k: `miss-edge-${i}` })),
-    ...r.missingAcceptanceCriteria.map((t, i) => ({ t, k: `miss-ac-${i}` })),
+    ...r.missingRequirements.map((t) => ({ t, category: 'missing_requirement', chip: 'Missing from PRD' })),
+    ...r.missingUserFlows.map((t) => ({ t, category: 'missing_user_flow', chip: 'Missing flow' })),
+    ...r.missingEdgeCases.map((t) => ({ t, category: 'missing_edge_case', chip: 'Missing edge case' })),
+    ...r.missingAcceptanceCriteria.map((t) => ({ t, category: 'missing_acceptance_criteria', chip: 'Missing AC' })),
   ]
   const questions = [
-    ...r.productQuestions.map((t, i) => ({ t, k: `q-prod-${i}` })),
-    ...r.engineeringQuestions.map((t, i) => ({ t, k: `q-eng-${i}` })),
+    ...r.productQuestions.map((t) => ({ t, category: 'product_question' })),
+    ...r.engineeringQuestions.map((t) => ({ t, category: 'engineering_question' })),
   ]
   const functionalCount =
     r.critical.length + r.medium.length + r.minor.length + missingFunctional.length + questions.length
@@ -118,21 +152,21 @@ export function ReviewTab({
           meta={<Chip tone="slate">{functionalCount} Issue{functionalCount === 1 ? '' : 's'}</Chip>}
         >
           {r.critical.map((i, n) => (
-            <IssueRow key={`c${n}`} issue={i} chip="Critical" tone="rose" itemKey={`critical:${n}:${i.title}`} url={url} />
+            <IssueRow key={`c${n}`} issue={i} chip="Critical" tone="rose" category="critical" reviewId={reviewId} url={url} />
           ))}
           {r.medium.map((i, n) => (
-            <IssueRow key={`m${n}`} issue={i} chip="Medium" tone="amber" itemKey={`medium:${n}:${i.title}`} url={url} />
+            <IssueRow key={`m${n}`} issue={i} chip="Medium" tone="amber" category="medium" reviewId={reviewId} url={url} />
           ))}
           {r.minor.map((i, n) => (
-            <IssueRow key={`n${n}`} issue={i} chip="Minor" tone="sky" itemKey={`minor:${n}:${i.title}`} url={url} />
+            <IssueRow key={`n${n}`} issue={i} chip="Minor" tone="sky" category="minor" reviewId={reviewId} url={url} />
           ))}
-          {missingFunctional.map(({ t, k }) => (
-            <Row key={k} chip="Missing from PRD" tone="rose" itemKey={`${k}:${t.slice(0, 60)}`} url={url}>
+          {missingFunctional.map(({ t, category, chip }, n) => (
+            <Row key={`${category}-${n}`} chip={chip} tone="rose" source={{ agent: 'pm_review', category, title: t }} reviewId={reviewId} url={url}>
               <p className="text-[13px] leading-snug text-slate-800">{t}</p>
             </Row>
           ))}
-          {questions.map(({ t, k }) => (
-            <Row key={k} chip="Needs clarification" tone="blue" itemKey={`${k}:${t.slice(0, 60)}`} url={url}>
+          {questions.map(({ t, category }, n) => (
+            <Row key={`${category}-${n}`} chip="Needs clarification" tone="blue" source={{ agent: 'pm_review', category, title: t }} reviewId={reviewId} url={url}>
               <p className="text-[13px] leading-snug text-slate-800">{t}</p>
             </Row>
           ))}
@@ -156,7 +190,7 @@ export function ReviewTab({
           </p>
         ) : (
           r.missingNfrs.map((t, n) => (
-            <Row key={n} chip="Missing from PRD" tone="amber" itemKey={`nfr-${n}:${t.slice(0, 60)}`} url={url}>
+            <Row key={n} chip="Missing from PRD" tone="amber" source={{ agent: 'pm_review', category: 'missing_nfr', title: t }} reviewId={reviewId} url={url}>
               <p className="text-[13px] leading-snug text-slate-800">{t}</p>
             </Row>
           ))

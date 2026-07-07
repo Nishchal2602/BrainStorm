@@ -1,24 +1,36 @@
-const KEY = 'pm_feedback'
-const MAX_ENTRIES = 300
+import { newId, type FeedbackEvent, ANALYTICS_SCHEMA_VERSION } from '@/lib/analytics'
 
-/** One 👍/👎 vote on a review item — local evaluation data for prompt tuning. */
-export interface FeedbackEntry {
-  /** Stable item key, e.g. "critical:0:<issue title>". */
-  key: string
-  vote: 'up' | 'down'
-  feature: string
-  url?: string
-  timestamp: number
-}
+// Immutable, append-only feedback/interaction event log. Every 👍/👎 (and, later,
+// expand/copy/dismiss) is a new event — never an overwrite — so quality signals
+// can be analyzed over time. Best-effort, never throws.
 
-/** Best-effort append (newest first, capped). Never throws — feedback is optional. */
-export async function recordFeedback(entry: Omit<FeedbackEntry, 'timestamp'>): Promise<void> {
+const KEY = 'pm_feedback_events'
+const MAX_ENTRIES = 1000
+
+export async function listFeedbackEvents(): Promise<FeedbackEvent[]> {
   try {
     const obj = await chrome.storage.local.get(KEY)
-    const list = (obj[KEY] as FeedbackEntry[] | undefined) ?? []
-    const next = [{ ...entry, timestamp: Date.now() }, ...list].slice(0, MAX_ENTRIES)
+    return (obj[KEY] as FeedbackEvent[] | undefined) ?? []
+  } catch {
+    return []
+  }
+}
+
+/** Append one feedback event (id + timestamp + schemaVersion filled here). */
+export async function recordFeedbackEvent(
+  event: Omit<FeedbackEvent, 'feedbackId' | 'timestamp' | 'schemaVersion'>,
+): Promise<void> {
+  try {
+    const list = await listFeedbackEvents()
+    const full: FeedbackEvent = {
+      ...event,
+      schemaVersion: ANALYTICS_SCHEMA_VERSION,
+      feedbackId: newId('fb'),
+      timestamp: Date.now(),
+    }
+    const next = [full, ...list].slice(0, MAX_ENTRIES)
     await chrome.storage.local.set({ [KEY]: next })
   } catch {
-    /* storage unavailable — drop the vote */
+    /* storage unavailable — drop the event */
   }
 }

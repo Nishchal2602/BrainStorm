@@ -285,6 +285,9 @@ export interface CompetitorPayload {
   differentiationScores: DifferentiationScores
   /** Strategy-consultant narrative. */
   recommendation: string
+  /** Raw grounded model output (facts + reasoning template). Captured for
+   * analytics, stripped from the payload before it ships to the UI. */
+  raw?: string
 }
 export interface CompliancePayload {
   regulations: string[]
@@ -301,6 +304,8 @@ export interface SolutionCriticPayload {
 export interface PmReviewAgentPayload {
   review: import('@/lib/features/pmReview').ReadinessReview
   sections: import('@/lib/types').Section[]
+  /** Raw XML the agent parsed. Captured for analytics, stripped before UI. */
+  raw?: string
 }
 
 /** The recommendation-engine verdict — "what should I do?". */
@@ -337,6 +342,10 @@ export interface OrchestrationResult {
   ranAgentIds: string[]
   skippedAgentIds: string[]
   usage?: TokenUsage
+  /** Per-stage usage for analytics (the shared analyze + synthesis calls,
+   * which aren't agents in `results`). */
+  analyzeUsage?: TokenUsage
+  synthesisUsage?: TokenUsage
 }
 
 // Re-export the domain context types agents commonly read from metadata.

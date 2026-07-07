@@ -63,7 +63,7 @@ const SCHEMA = {
   ],
 } as const
 
-const SYSTEM = `You are a senior product leader making a build decision. You are given a product document plus structured findings from specialist agents (customer voice, research, competitor, compliance, solution critic, PRD readiness). Some agents may report nothing yet — weigh only real signal.
+export const SYNTHESIS_SYSTEM = `You are a senior product leader making a build decision. You are given a product document plus structured findings from specialist agents (customer voice, research, competitor, compliance, solution critic, PRD readiness). Some agents may report nothing yet — weigh only real signal.
 
 Reason ACROSS the findings — do not merely concatenate them. Resolve tension between supporting and contradicting evidence, weigh risks and missing requirements, and reach ONE decision:
 - "build": strong evidence, manageable risk, requirements clear.
@@ -149,7 +149,7 @@ export class Synthesizer {
     const user = parts.join('\n')
 
     const { data, usage } = await this.llm.generateStructured<SynthesisReport>({
-      system: SYSTEM,
+      system: SYNTHESIS_SYSTEM,
       user,
       schema: SCHEMA as object,
       maxTokens: 4000,

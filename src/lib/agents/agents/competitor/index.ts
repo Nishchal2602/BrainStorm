@@ -171,7 +171,7 @@ export class CompetitorIntelligenceAgent implements Agent {
     try {
       this.logger.info('competitor: queries', { productCategory, queries })
       // THE one grounded call: discovery + market reasoning in a single pass.
-      const { raw, reasoning, usage: discoveryUsage } = await discoverAndReason(
+      const { raw, reasoning, rawText, usage: discoveryUsage } = await discoverAndReason(
         this.llm, analysis, queries, meta,
       )
       const { competitors, droppedLowConfidence } = normalizeLandscape(raw)
@@ -243,6 +243,7 @@ export class CompetitorIntelligenceAgent implements Agent {
         differentiation,
         differentiationScores: result.scores,
         recommendation: result.recommendation,
+        raw: rawText,
       }
 
       // Strategic insights from the reasoning pass become synthesis findings.

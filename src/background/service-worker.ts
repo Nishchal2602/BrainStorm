@@ -31,12 +31,58 @@ import {
 import { parseReadinessReview } from '@/lib/features/pmReview'
 import type { ReviewData, ReviewResultDoc } from '@/lib/review'
 import { addRunRecord, buildRunRecord } from '@/lib/storage/intelligence'
+import {
+  buildReviewRecord,
+  encodeRaw,
+  execFromAgentResult,
+  newId,
+  stageExec,
+  type AgentExecutionRecord,
+  type RawOutput,
+} from '@/lib/analytics'
+import { addReviewRecord } from '@/lib/storage/reviews'
 
 // Open the side panel when the toolbar icon is clicked.
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {})
 })
 chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {})
+
+// Per-service-worker-lifetime session id + extension version, stamped on every
+// captured review/feedback record for analytics.
+const SESSION_ID = crypto.randomUUID()
+function extensionVersion(): string {
+  try {
+    return chrome.runtime.getManifest().version
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** Persist an analytics ReviewRecord (best-effort; fills clientId/session/version). */
+async function captureReview(input: {
+  reviewId: string
+  url?: string
+  document: string
+  reviewType: 'standard' | 'deep'
+  demo: boolean
+  model: string
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+  totalLatencyMs: number
+  phases?: { extractMs?: number; llmMs?: number; parseMs?: number }
+  review?: ReviewData
+  agents: AgentExecutionRecord[]
+  rawOutputs?: Record<string, RawOutput>
+}): Promise<void> {
+  try {
+    const clientId = await getClientId()
+    await addReviewRecord(
+      buildReviewRecord({ ...input, clientId, sessionId: SESSION_ID, extensionVersion: extensionVersion() }),
+    )
+  } catch {
+    /* analytics capture is best-effort */
+  }
+}
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -138,13 +184,30 @@ async function handleRunFeature(
     await new Promise((r) => setTimeout(r, 600)) // let the loading state show
     const sample = SAMPLES[featureId]
     const parsed = feature.parse(sample.text, sample.sources)
+    const review = feature.id === 'pm_review' ? readinessReviewData(sample.text) : undefined
     const result: ReviewResultDoc = {
       feature: feature.id,
       title: `${feature.label} (sample)`,
       sections: parsed.sections,
       sources: sample.sources.length ? sample.sources : undefined,
       copyText: parsed.copyText,
-      review: feature.id === 'pm_review' ? readinessReviewData(sample.text) : undefined,
+      review,
+    }
+    if (review) {
+      const reviewId = newId('rv')
+      review.reviewId = reviewId
+      await captureReview({
+        reviewId,
+        url,
+        document: sample.text,
+        reviewType: 'standard',
+        demo: true,
+        model: 'demo',
+        totalLatencyMs: 0,
+        review,
+        agents: [stageExec('pm_review', 'demo')],
+        rawOutputs: { pm_review: await encodeRaw(sample.text) },
+      })
     }
     await addHistory({
       id: newHistoryId(),
@@ -164,7 +227,9 @@ async function handleRunFeature(
     return { ok: false, error: 'Add your API key in Settings first.' }
   }
 
+  const extractStart = Date.now()
   const raw = await injectExtract(tabId)
+  const extractMs = Date.now() - extractStart
   const ctx = buildPageContext(raw, detectSource(raw.url), feature.maxPageChars(settings.researchDepth))
 
   const system = [
@@ -182,6 +247,7 @@ async function handleRunFeature(
   const model = settings.model === 'auto' ? feature.model : settings.model
   const client = createClaudeClient(model, settings.apiKey)
   const clientId = await getClientId()
+  const llmStart = Date.now()
   const gen = await client.generate({
     system,
     pageText,
@@ -195,6 +261,7 @@ async function handleRunFeature(
     // Per-user rate-limit metadata (proxy enforces caps per client + depth).
     meta: { clientId, depth: settings.researchDepth },
   })
+  const llmMs = Date.now() - llmStart
 
   if (gen.usage) {
     console.log('[PM Co-Pilot] token usage', {
@@ -204,13 +271,16 @@ async function handleRunFeature(
     })
   }
 
+  const parseStart = Date.now()
   let parsed
   try {
     parsed = feature.parse(gen.text, gen.sources)
   } catch {
     return { ok: false, error: 'The model returned an unexpected format. Please try again.' }
   }
+  const parseMs = Date.now() - parseStart
 
+  const review = feature.id === 'pm_review' ? readinessReviewData(gen.text) : undefined
   const result: ReviewResultDoc = {
     feature: feature.id,
     title: feature.label,
@@ -218,7 +288,26 @@ async function handleRunFeature(
     sources: gen.sources.length ? gen.sources : undefined,
     copyText: parsed.copyText,
     usage: gen.usage,
-    review: feature.id === 'pm_review' ? readinessReviewData(gen.text) : undefined,
+    review,
+  }
+
+  if (review) {
+    const reviewId = newId('rv')
+    review.reviewId = reviewId
+    await captureReview({
+      reviewId,
+      url: ctx.url,
+      document: ctx.content,
+      reviewType: 'standard',
+      demo: false,
+      model,
+      usage: gen.usage,
+      totalLatencyMs: extractMs + llmMs + parseMs,
+      phases: { extractMs, llmMs, parseMs },
+      review,
+      agents: [stageExec('pm_review', model, gen.usage, llmMs)],
+      rawOutputs: { pm_review: await encodeRaw(gen.text) },
+    })
   }
 
   await addHistory({
@@ -299,6 +388,21 @@ async function handleDeepReview(
       copyText: sectionsToCopyText('Deep Intelligence', sections),
       review,
     }
+    const reviewId = newId('rv')
+    review.reviewId = reviewId
+    await captureReview({
+      reviewId,
+      url,
+      document: SAMPLES.pm_review.text,
+      reviewType: 'deep',
+      demo: true,
+      model: 'demo',
+      totalLatencyMs: 0,
+      review,
+      agents: ['analyze', 'pm_review', 'customer_voice', 'competitor', 'synthesis'].map((a) =>
+        stageExec(a, 'demo'),
+      ),
+    })
     await addHistory({
       id: newHistoryId(),
       timestamp: Date.now(),
@@ -316,7 +420,9 @@ async function handleDeepReview(
     return { ok: false, error: 'Add your API key in Settings first.' }
   }
 
+  const extractStart = Date.now()
   const raw = await injectExtract(tabId)
+  const extractMs = Date.now() - extractStart
   const source = detectSource(raw.url)
   const ctx = buildPageContext(raw, source, 20_000)
   const userContext = await getUserContext()
@@ -331,7 +437,9 @@ async function handleDeepReview(
 
   const model = settings.model === 'auto' ? 'claude-sonnet-4-6' : settings.model
   const orchestrator = createDefaultOrchestrator({ model, apiKey: settings.apiKey })
+  const llmStart = Date.now()
   const out = await orchestrator.run(agentContext)
+  const llmMs = Date.now() - llmStart
 
   if (out.usage) {
     console.log('[PM Co-Pilot] deep review token usage', {
@@ -353,12 +461,23 @@ async function handleDeepReview(
   ]
   const pmData = agentData<PmReviewAgentPayload>(out.results, 'pm_review')
   const compData = agentData<CompetitorPayload>(out.results, 'competitor')
+  const voiceData = agentData<CustomerVoicePayload>(out.results, 'customer_voice')
+
+  // Capture raw agent outputs BEFORE stripping them from the payloads that ship
+  // to the UI (raw is analytics-only — "why was this finding generated?").
+  const rawOutputs: Record<string, RawOutput> = { analyze: await encodeRaw(JSON.stringify(out.analysis)) }
+  if (pmData?.raw) rawOutputs.pm_review = await encodeRaw(pmData.raw)
+  if (voiceData) rawOutputs.customer_voice = await encodeRaw(JSON.stringify(voiceData))
+  if (compData?.raw) rawOutputs.competitor = await encodeRaw(compData.raw)
+  rawOutputs.synthesis = await encodeRaw(JSON.stringify(out.report))
+
   const review: ReviewData = {
     decision: DEEP_DECISION_LABEL[out.report.decision.recommendation],
     readiness: pmData?.review,
     verdict: out.report.finalVerdict || out.report.executiveSummary || undefined,
-    voice: agentData<CustomerVoicePayload>(out.results, 'customer_voice'),
-    competitor: compData,
+    voice: voiceData,
+    // Strip the analytics-only raw text before it ships to the UI/history.
+    competitor: compData ? { ...compData, raw: undefined } : undefined,
     insights: compData?.landscape.whiteSpace
       .slice(0, 4)
       .map((w) => ({ text: w.opportunity, source: w.rationale })),
@@ -372,6 +491,29 @@ async function handleDeepReview(
     usage: out.usage,
     review,
   }
+
+  const reviewId = newId('rv')
+  review.reviewId = reviewId
+  const agentExecs: AgentExecutionRecord[] = [
+    stageExec('analyze', model, out.analyzeUsage),
+    ...out.results.map((r) => execFromAgentResult(r, model)),
+    ...out.skippedAgentIds.map((id) => stageExec(id, model, undefined, undefined, 'skipped')),
+    stageExec('synthesis', model, out.synthesisUsage),
+  ]
+  await captureReview({
+    reviewId,
+    url: ctx.url,
+    document: ctx.content,
+    reviewType: 'deep',
+    demo: false,
+    model,
+    usage: out.usage,
+    totalLatencyMs: extractMs + llmMs,
+    phases: { extractMs, llmMs },
+    review,
+    agents: agentExecs,
+    rawOutputs,
+  })
 
   const ts = Date.now()
   // Capture the structured run (foundation for the Intelligence Graph).

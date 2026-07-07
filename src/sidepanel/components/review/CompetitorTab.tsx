@@ -27,9 +27,11 @@ function CompetitorRow({ c }: { c: Competitor }) {
 export function CompetitorTab({
   competitor,
   url,
+  reviewId,
   onRunDeep,
 }: {
   competitor?: CompetitorPayload
+  reviewId?: string
   url?: string
   onRunDeep: () => void
 }) {
@@ -83,7 +85,7 @@ export function CompetitorTab({
         <section className="rounded-lg border border-slate-200 bg-white p-3">
           <div className="flex items-start justify-between gap-2">
             <p className="text-xs leading-relaxed text-slate-600">{competitor.recommendation}</p>
-            <Thumbs itemKey="competitor:recommendation" feature="competitor" url={url} />
+            <Thumbs source={{ agent: 'competitor', category: 'recommendation', title: 'Strategy Recommendation' }} reviewId={reviewId} url={url} />
           </div>
         </section>
       )}

@@ -127,7 +127,7 @@ export class PmReviewAgent implements Agent {
       // Reviewer certainty — deliberately NOT readiness/100 (a reviewer can be
       // highly confident that a document is NOT ready).
       confidence: review.reviewerConfidence ? CONFIDENCE_NUM[review.reviewerConfidence] : 0.5,
-      data: { review, sections },
+      data: { review, sections, raw: text },
       status: 'ok',
       usage,
     }
