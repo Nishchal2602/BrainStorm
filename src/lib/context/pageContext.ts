@@ -1,4 +1,5 @@
 import type { DetectedSource, PageContext } from '@/lib/types'
+import type { DocHeading } from '@/lib/navigation'
 
 const DEFAULT_MAX_CHARS = 12_000
 
@@ -11,6 +12,8 @@ export interface RawExtract {
   outline?: string
   /** Best-effort source-specific key/value fields (e.g. Jira status/priority). */
   fields?: Array<{ label: string; value: string }>
+  /** Full heading map (level/text/anchor id/path) for jump-to-section navigation. */
+  headings?: DocHeading[]
 }
 
 function normalize(text: string): string {
@@ -63,6 +66,7 @@ export function buildPageContext(
     truncated,
     outline: raw.outline ? normalize(raw.outline) : undefined,
     fields: raw.fields?.length ? raw.fields : undefined,
+    headings: raw.headings?.length ? raw.headings : undefined,
   }
 }
 

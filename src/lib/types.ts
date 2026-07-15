@@ -84,6 +84,8 @@ export interface PageContext {
   outline?: string
   /** Best-effort source-specific key/value fields (e.g. Jira status/priority). */
   fields?: Array<{ label: string; value: string }>
+  /** Full heading map (level/text/anchor id/path) for jump-to-section navigation. */
+  headings?: import('@/lib/navigation').DocHeading[]
 }
 
 /** Provider-neutral token accounting for one generate() call. */

@@ -1,4 +1,5 @@
 import type { DetectedSource, FeatureId, ResultDoc, ReviewContext } from '@/lib/types'
+import type { ResolvedTarget } from '@/lib/navigation'
 
 /** Lightweight page info for the "Detected: …" badge (no Claude call). */
 export interface PageInfo {
@@ -12,6 +13,7 @@ export type Request =
   | { type: 'RUN_FEATURE'; tabId: number; featureId: FeatureId; reviewContext?: ReviewContext }
   | { type: 'RUN_DEEP_REVIEW'; tabId: number; reviewContext?: ReviewContext }
   | { type: 'VALIDATE_KEY'; apiKey: string }
+  | { type: 'JUMP_TO_REFERENCE'; tabId: number; target: ResolvedTarget }
 
 export type Ok<T> = { ok: true; data: T }
 export type Err = { ok: false; error: string; code?: string }
@@ -25,7 +27,9 @@ export type ReplyFor<R extends Request> = R extends { type: 'GET_PAGE_INFO' }
       ? Reply<ResultDoc>
       : R extends { type: 'VALIDATE_KEY' }
         ? Reply<{ valid: true }>
-        : never
+        : R extends { type: 'JUMP_TO_REFERENCE' }
+          ? Reply<{ found: boolean }>
+          : never
 
 /** Typed wrapper around chrome.runtime.sendMessage. */
 export function sendMessage<R extends Request>(req: R): Promise<ReplyFor<R>> {

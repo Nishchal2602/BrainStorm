@@ -15,6 +15,8 @@ import { sectionsToCopyText } from '@/lib/features/parse'
 import { createClaudeClient } from '@/lib/claude/client'
 import { config } from '@/lib/config'
 import { extractFromPage } from '@/content/extract'
+import { locateAndHighlight } from '@/content/locate'
+import type { ResolvedTarget } from '@/lib/navigation'
 import {
   competitorSections,
   createDefaultOrchestrator,
@@ -124,7 +126,7 @@ const DEEP_DECISION_LABEL: Record<BuildDecision, string> = {
 }
 
 const CANNOT_READ =
-  "Can't read this page. Open PM Co-Pilot via its toolbar icon on a normal web page (not a Chrome settings or extension page), then try again."
+  "Can't read this page. Open Pocket PM via its toolbar icon on a normal web page (not a Chrome settings or extension page), then try again."
 
 async function injectGetPageInfo(tabId: number): Promise<{ url: string; title: string }> {
   try {
@@ -150,6 +152,24 @@ async function injectExtract(tabId: number): Promise<RawExtract> {
 async function handleGetPageInfo(tabId: number): Promise<Reply<PageInfo>> {
   const { url, title } = await injectGetPageInfo(tabId)
   return { ok: true, data: { url, title, source: detectSource(url) } }
+}
+
+/** Jump-to-PRD: run the locator in the tab; { found:false } = section missing. */
+async function handleJumpToReference(
+  tabId: number,
+  target: ResolvedTarget,
+): Promise<Reply<{ found: boolean }>> {
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: locateAndHighlight,
+      args: [target],
+    })
+    return { ok: true, data: (res.result as { found: boolean } | undefined) ?? { found: false } }
+  } catch {
+    // Restricted page / tab gone — the panel maps this to the "open the PRD" toast.
+    return { ok: false, error: CANNOT_READ, code: 'CANNOT_READ' }
+  }
 }
 
 async function handleValidateKey(apiKey: string): Promise<Reply<{ valid: true }>> {
@@ -281,6 +301,9 @@ async function handleRunFeature(
   const parseMs = Date.now() - parseStart
 
   const review = feature.id === 'pm_review' ? readinessReviewData(gen.text) : undefined
+  // Document map for jump-to-PRD navigation (live runs only — headings were
+  // captured from the real page during extraction).
+  if (review && ctx.headings?.length) review.docMap = { url: ctx.url, headings: ctx.headings }
   const result: ReviewResultDoc = {
     feature: feature.id,
     title: feature.label,
@@ -473,6 +496,7 @@ async function handleDeepReview(
 
   const review: ReviewData = {
     decision: DEEP_DECISION_LABEL[out.report.decision.recommendation],
+    docMap: ctx.headings?.length ? { url: ctx.url, headings: ctx.headings } : undefined,
     readiness: pmData?.review,
     verdict: out.report.finalVerdict || out.report.executiveSummary || undefined,
     voice: voiceData,
@@ -555,6 +579,8 @@ async function dispatch(req: Request): Promise<Reply<unknown>> {
       return handleDeepReview(req.tabId, req.reviewContext)
     case 'VALIDATE_KEY':
       return handleValidateKey(req.apiKey)
+    case 'JUMP_TO_REFERENCE':
+      return handleJumpToReference(req.tabId, req.target)
     default:
       return { ok: false, error: 'Unknown request.' }
   }

@@ -182,6 +182,43 @@ export function extractFromPage(): RawExtract {
     return lines.join('\n').slice(0, MAX_OUTLINE_CHARS)
   }
 
+  // Document map for jump-to-section navigation: every heading with its level,
+  // text, best-available DOM anchor id, and ancestor-heading path. The id makes
+  // later lookup exact; text+path make it resilient when ids are absent/changed.
+  const MAX_HEADINGS = 150
+  const headingAnchorId = (el: HTMLElement): string | undefined => {
+    if (el.id) return el.id
+    // Anchor inside the heading (GitHub/Confluence style <h2><a id="…">…</a></h2>).
+    const inner = el.querySelector('a[id], [id]') as HTMLElement | null
+    if (inner?.id) return inner.id
+    // Named anchor immediately preceding the heading (<a id="…"></a><h2>…).
+    const prev = el.previousElementSibling as HTMLElement | null
+    if (prev && prev.id && (prev.innerText ?? '').trim().length === 0) return prev.id
+    // A tightly-wrapping parent with an id (Notion blocks, Confluence wrappers).
+    const parent = el.parentElement
+    if (parent && parent.id && parent.children.length <= 3) return parent.id
+    return undefined
+  }
+  const buildHeadings = (
+    root: HTMLElement,
+  ): Array<{ level: number; text: string; id?: string; path: string[] }> => {
+    const out: Array<{ level: number; text: string; id?: string; path: string[] }> = []
+    // Stack of ancestor heading texts by level (path[0] = nearest h1 above, …).
+    const stack: string[] = []
+    for (const h of Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6'))) {
+      const el = h as HTMLElement
+      if (el.closest('nav,header,footer,aside')) continue
+      const text = (el.innerText ?? '').replace(/\s+/g, ' ').trim()
+      if (!text) continue
+      const level = Number(el.tagName[1])
+      stack.length = Math.max(0, level - 1)
+      out.push({ level, text, id: headingAnchorId(el), path: stack.filter(Boolean).slice(0, 4) })
+      stack[level - 1] = text
+      if (out.length >= MAX_HEADINGS) break
+    }
+    return out
+  }
+
   // --- Source-specific KEY FIELDS (best-effort; selectors are inherently
   // brittle on obfuscated SPAs, so any miss just yields fewer fields). ---
   const detectSrc = (): string => {
@@ -245,11 +282,17 @@ export function extractFromPage(): RawExtract {
 
   let content = ''
   let outline = ''
+  let headings: Array<{ level: number; text: string; id?: string; path: string[] }> = []
   try {
     content = toMarkdown(root)
     outline = buildOutline(root)
   } catch {
     content = ''
+  }
+  try {
+    headings = buildHeadings(root)
+  } catch {
+    headings = []
   }
   if (content.length < 100) {
     // Fallback: plain text from the region, then the whole body.
@@ -271,5 +314,6 @@ export function extractFromPage(): RawExtract {
     selection,
     outline: outline || undefined,
     fields: fields.length ? fields : undefined,
+    headings: headings.length ? headings : undefined,
   }
 }

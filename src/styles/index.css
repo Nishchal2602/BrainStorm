@@ -19,3 +19,18 @@ body {
   background: #f8fafc;
   color: #0f172a;
 }
+
+/* Toast entrance (keeps the Tailwind -translate-x-1/2 centering at rest). */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+.animate-toast-in {
+  animation: toast-in 200ms ease-out;
+}

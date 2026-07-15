@@ -159,6 +159,55 @@ export function EmptyState({
   )
 }
 
+/** Clickable in-document reference (GitHub-review style). Generic: any finding
+ * type renders its location text through this and gets the pointer cursor,
+ * hover underline, 📍 affordance, tooltip, and keyboard activation for free. */
+export function JumpText({ text, onJump }: { text: string; onJump: () => void }) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title="📍 Jump to PRD — click to locate in document"
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation() // don't toggle the row's <details>
+        onJump()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          e.stopPropagation()
+          onJump()
+        }
+      }}
+      className="group/jump inline cursor-pointer rounded-sm underline decoration-slate-300 decoration-dotted underline-offset-2 transition-colors hover:bg-brand-50 hover:text-brand-700 hover:decoration-brand-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-500"
+    >
+      {text}
+      <span
+        aria-hidden="true"
+        className="ml-1 inline-block text-[10px] opacity-0 transition-opacity group-hover/jump:opacity-100 group-focus-visible/jump:opacity-100"
+      >
+        📍
+      </span>
+    </span>
+  )
+}
+
+/** Non-blocking toast pinned above the bottom tab bar. Render-once host —
+ * pass the current message (or null) from the owner's state. */
+export function Toast({ message }: { message: string | null }) {
+  if (!message) return null
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-16 left-1/2 z-30 w-max max-w-[90%] -translate-x-1/2 animate-toast-in rounded-lg bg-slate-900/95 px-3.5 py-2 text-xs font-medium text-white shadow-lg"
+    >
+      {message}
+    </div>
+  )
+}
+
 /** One clamped line of secondary text (scanning, not reading). */
 export function truncate(s: string, max = 160): string {
   const t = s.trim()

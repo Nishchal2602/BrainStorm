@@ -47,7 +47,7 @@ Respond with XML ONLY — exactly this structure, no prose outside the tags:
   <critical>
     <issue>
       <title>short, specific issue title</title>
-      <where>the PRD section or quote it refers to</where>
+      <where>the EXACT heading text from the DOCUMENT OUTLINE that the issue falls under, copied verbatim; only when no heading fits, a short verbatim quote from the document</where>
       <why>why it is insufficient</why>
       <impact>the engineering impact</impact>
       <fix>exactly what information must be added</fix>

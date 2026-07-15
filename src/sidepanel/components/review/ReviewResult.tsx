@@ -1,10 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ResultDoc } from '@/lib/types'
 import type { ReviewData } from '@/lib/review'
 import { formatTokens } from '@/lib/usage'
+import { resolveReference, sameDoc, type JumpReference } from '@/lib/navigation'
+import { sendMessage } from '@/lib/messaging/types'
+import { Toast } from './bits'
 import { ReviewTab } from './ReviewTab'
 import { VoiceTab } from './VoiceTab'
 import { CompetitorTab } from './CompetitorTab'
+
+const TOAST_PRD_CLOSED = 'Cannot jump to section. Open the reviewed PRD to navigate.'
+const TOAST_NOT_FOUND = 'Section not found. The PRD may have changed since this review was created.'
 
 // Tabbed review experience for results carrying structured ReviewData.
 // PM Review / Competitor / Voice each own a single responsibility; the
@@ -48,15 +54,49 @@ export function ReviewResult({
   result,
   review,
   url,
+  tabId,
   onRunDeep,
 }: {
   result: ResultDoc
   review: ReviewData
   url?: string
+  tabId?: number | null
   onRunDeep: () => void
 }) {
   const [tab, setTab] = useState<Tab>('review')
   const [copied, setCopied] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<number | undefined>(undefined)
+
+  const showToast = (message: string) => {
+    setToast(message)
+    window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000)
+  }
+  useEffect(() => () => window.clearTimeout(toastTimer.current), [])
+
+  // Jump-to-PRD: guard (is the reviewed doc open?) → resolve against the
+  // review-time DocMap → locate + highlight in the tab. All failures are
+  // non-blocking toasts — never console errors.
+  const handleJump = async (reference: JumpReference) => {
+    const ref: JumpReference = { docMap: review.docMap, ...reference }
+    if (tabId == null || !ref.docMap || !sameDoc(url, ref.docMap.url)) {
+      showToast(TOAST_PRD_CLOSED)
+      return
+    }
+    const target = resolveReference(ref)
+    if (!target) {
+      showToast(TOAST_NOT_FOUND)
+      return
+    }
+    try {
+      const res = await sendMessage({ type: 'JUMP_TO_REFERENCE', tabId, target })
+      if (!res.ok) showToast(TOAST_PRD_CLOSED)
+      else if (!res.data.found) showToast(TOAST_NOT_FOUND)
+    } catch {
+      showToast(TOAST_PRD_CLOSED)
+    }
+  }
 
   const copy = async () => {
     try {
@@ -84,7 +124,13 @@ export function ReviewResult({
       </div>
 
       {tab === 'review' && (
-        <ReviewTab readiness={review.readiness} insights={review.insights} reviewId={review.reviewId} url={url} />
+        <ReviewTab
+          readiness={review.readiness}
+          insights={review.insights}
+          reviewId={review.reviewId}
+          url={url}
+          onJump={handleJump}
+        />
       )}
       {tab === 'competitor' && (
         <CompetitorTab competitor={review.competitor} reviewId={review.reviewId} url={url} onRunDeep={onRunDeep} />
@@ -92,6 +138,8 @@ export function ReviewResult({
       {tab === 'voice' && (
         <VoiceTab voice={review.voice} verdict={review.verdict} reviewId={review.reviewId} url={url} onRunDeep={onRunDeep} />
       )}
+
+      <Toast message={toast} />
 
       {/* Fixed bottom tab bar — always visible while a review is open. */}
       <nav className="fixed bottom-0 left-0 right-0 z-20 flex border-t border-slate-200 bg-white">

@@ -2,7 +2,8 @@ import type { ReactNode } from 'react'
 import type { ReadinessIssue, ReadinessReview } from '@/lib/features/pmReview'
 import type { ProductInsight } from '@/lib/review'
 import type { FindingSource } from '@/lib/analytics'
-import { Accordion, Chip, Thumbs, firstSentence, type ChipTone } from './bits'
+import type { JumpReference } from '@/lib/navigation'
+import { Accordion, Chip, JumpText, Thumbs, firstSentence, type ChipTone } from './bits'
 
 // PM Review pane: Decision Confidence → Functional Specs (accordion of chip
 // rows) → Non-Functional Specs → Strengths → Product Opportunities.
@@ -43,6 +44,7 @@ function IssueRow({
   category,
   reviewId,
   url,
+  onJump,
 }: {
   issue: ReadinessIssue
   chip: string
@@ -50,9 +52,10 @@ function IssueRow({
   category: string
   reviewId?: string
   url?: string
+  onJump?: (ref: JumpReference) => void
 }) {
+  // Where is hoisted out of the uniform list: it's the navigable reference.
   const details = [
-    issue.where && (['Where', issue.where] as const),
     issue.impact && (['Impact', issue.impact] as const),
     issue.fix && (['Fix', issue.fix] as const),
     issue.example && (['Suggested addition', issue.example] as const),
@@ -62,12 +65,26 @@ function IssueRow({
     <Row chip={chip} tone={tone} source={{ agent: 'pm_review', category, title: issue.title }} reviewId={reviewId} url={url}>
       <p className="text-[13px] leading-snug text-slate-800">{issue.title}</p>
       {issue.why && <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{issue.why}</p>}
-      {details.length > 0 && (
+      {(issue.where || details.length > 0) && (
         <details className="mt-1.5">
           <summary className="cursor-pointer select-none text-[11px] font-medium text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden">
             Details ▸
           </summary>
           <dl className="mt-1.5 space-y-1.5 border-l-2 border-slate-100 pl-2.5">
+            {issue.where && (
+              <div>
+                <dt className="font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Where
+                </dt>
+                <dd className="text-xs leading-relaxed text-slate-600">
+                  {onJump ? (
+                    <JumpText text={issue.where} onJump={() => onJump({ where: issue.where })} />
+                  ) : (
+                    issue.where
+                  )}
+                </dd>
+              </div>
+            )}
             {details.map(([label, value]) => (
               <div key={label}>
                 <dt className="font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">
@@ -88,11 +105,13 @@ export function ReviewTab({
   insights,
   reviewId,
   url,
+  onJump,
 }: {
   readiness?: ReadinessReview
   insights?: ProductInsight[]
   reviewId?: string
   url?: string
+  onJump?: (ref: JumpReference) => void
 }) {
   if (!readiness) {
     return (
@@ -152,13 +171,13 @@ export function ReviewTab({
           meta={<Chip tone="slate">{functionalCount} Issue{functionalCount === 1 ? '' : 's'}</Chip>}
         >
           {r.critical.map((i, n) => (
-            <IssueRow key={`c${n}`} issue={i} chip="Critical" tone="rose" category="critical" reviewId={reviewId} url={url} />
+            <IssueRow key={`c${n}`} issue={i} chip="Critical" tone="rose" category="critical" reviewId={reviewId} url={url} onJump={onJump} />
           ))}
           {r.medium.map((i, n) => (
-            <IssueRow key={`m${n}`} issue={i} chip="Medium" tone="amber" category="medium" reviewId={reviewId} url={url} />
+            <IssueRow key={`m${n}`} issue={i} chip="Medium" tone="amber" category="medium" reviewId={reviewId} url={url} onJump={onJump} />
           ))}
           {r.minor.map((i, n) => (
-            <IssueRow key={`n${n}`} issue={i} chip="Minor" tone="sky" category="minor" reviewId={reviewId} url={url} />
+            <IssueRow key={`n${n}`} issue={i} chip="Minor" tone="sky" category="minor" reviewId={reviewId} url={url} onJump={onJump} />
           ))}
           {missingFunctional.map(({ t, category, chip }, n) => (
             <Row key={`${category}-${n}`} chip={chip} tone="rose" source={{ agent: 'pm_review', category, title: t }} reviewId={reviewId} url={url}>

@@ -1,6 +1,7 @@
 import type { ResultDoc } from '@/lib/types'
 import type { ReadinessReview } from '@/lib/features/pmReview'
 import type { CompetitorPayload, CustomerVoicePayload } from '@/lib/agents/types'
+import type { DocMap } from '@/lib/navigation'
 
 // ---------------------------------------------------------------------------
 // Structured review view-model attached to a ResultDoc by the service worker.
@@ -21,6 +22,8 @@ export interface ReviewData {
   reviewId?: string
   /** Header badge label, e.g. "Build with Changes" / "Validate First". */
   decision?: string
+  /** Document map captured at review time — powers jump-to-PRD navigation. */
+  docMap?: DocMap
   /** PM Review tab — the Staff-PM implementation-readiness review. */
   readiness?: ReadinessReview
   /** Voice tab lead card (deep runs): the synthesis final verdict. */
