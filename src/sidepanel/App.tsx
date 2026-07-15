@@ -99,7 +99,7 @@ export default function App() {
 
   const runFeature = async (id: FeatureId) => {
     if (!tabId) {
-      setError('Open PM Co-Pilot on a web page first.')
+      setError('Open Pocket PM on a web page first.')
       return
     }
     // PM Review collects per-review context first; other features run directly.
@@ -125,7 +125,7 @@ export default function App() {
 
   const execFeature = async (id: FeatureId, reviewContext?: ReviewContext) => {
     if (!tabId) {
-      setError('Open PM Co-Pilot on a web page first.')
+      setError('Open Pocket PM on a web page first.')
       return
     }
     setRunning(id)
@@ -143,7 +143,7 @@ export default function App() {
 
   const execDeepReview = async (reviewContext: ReviewContext) => {
     if (!tabId) {
-      setError('Open PM Co-Pilot on a web page first.')
+      setError('Open Pocket PM on a web page first.')
       return
     }
     setRunning('pm_review')
@@ -185,7 +185,7 @@ export default function App() {
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/90 px-3 py-2 backdrop-blur">
         <div className="flex items-center gap-2">
           <span className="text-base">🧭</span>
-          <span className="text-sm font-bold text-slate-900">PM Co-Pilot</span>
+          <span className="text-sm font-bold text-slate-900">Pocket PM</span>
           {demo && (
             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">
               Demo
@@ -240,7 +240,7 @@ export default function App() {
             {exhausted && (
               <div className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5 text-[13px] text-brand-800">
                 🎉 You've used your free PM Reviews. The <strong>full version is coming soon</strong> —
-                thanks for trying PM Co-Pilot!
+                thanks for trying Pocket PM!
               </div>
             )}
             <SourceBadge info={pageInfo} loading={pageLoading} />
@@ -277,6 +277,7 @@ export default function App() {
                   result={result}
                   review={activeReview}
                   url={pageInfo?.url}
+                  tabId={tabId}
                   onRunDeep={openDeepModal}
                 />
               ) : (

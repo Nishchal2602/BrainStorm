@@ -1,4 +1,4 @@
-# PM Co-Pilot
+# Pocket PM
 
 An AI Chrome extension (Manifest V3) that gives Product Managers contextual help on any page — powered by Claude. Ships with an **owner-key model** (a tiny serverless proxy holds the key) so testers use it with **no key of their own**.
 
@@ -74,7 +74,7 @@ npm run build               # typecheck + production build → dist/
 
 1. `chrome://extensions` → enable **Developer mode**
 2. **Load unpacked** → select `dist/`
-3. Click the **PM Co-Pilot** toolbar icon on any web page → the side panel opens
+3. Click the **Pocket PM** toolbar icon on any web page → the side panel opens
 4. Owner-key mode: it just works (no key prompt). BYOK mode: Settings → Advanced → paste your key.
 
 ### Dev mode (HMR)

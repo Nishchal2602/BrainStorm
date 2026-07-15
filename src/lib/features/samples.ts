@@ -122,7 +122,7 @@ const ACTION_ITEMS = JSON.stringify({
       dueDate: null,
     },
     {
-      task: 'Draft a one-pager positioning PM Co-Pilot for seed-stage PMs',
+      task: 'Draft a one-pager positioning Pocket PM for seed-stage PMs',
       owner: null,
       priority: 'Medium',
       dueDate: null,
@@ -141,7 +141,7 @@ const SLACK_UPDATE = JSON.stringify({
 
 const SUMMARIZE = JSON.stringify({
   executiveSummary:
-    'This page describes PM Co-Pilot, an AI Chrome extension that helps Product Managers act on any page. The differentiator is PM Review — research-backed, graded insights — with summarization deliberately last. Recommended next step: validate which feature PMs will pay for before broadening scope.',
+    'This page describes Pocket PM, an AI Chrome extension that helps Product Managers act on any page. The differentiator is PM Review — research-backed, graded insights — with summarization deliberately last. Recommended next step: validate which feature PMs will pay for before broadening scope.',
   keyInsights: [
     'Differentiation: leads with PM Review (research + evidence grading) rather than generic summarization → defensible wedge vs. ChatGPT/Perplexity.',
     'Distribution: an owner-key proxy removes the per-user key barrier → lower trial friction for demos and investors.',

@@ -51,7 +51,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     <div className="space-y-3">
       <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">Set up PM Co-Pilot</h2>
+          <h2 className="text-sm font-semibold text-slate-900">Set up Pocket PM</h2>
           <span className="text-[11px] text-slate-400">
             Step {step + 1} of {STEPS.length}
           </span>

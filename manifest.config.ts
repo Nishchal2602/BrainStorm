@@ -3,12 +3,12 @@ import pkg from './package.json'
 
 export default defineManifest({
   manifest_version: 3,
-  name: 'PM Co-Pilot',
+  name: 'Pocket PM',
   version: pkg.version,
   description: pkg.description,
   // Opens the side panel when the toolbar icon is clicked (also wired in the SW).
   action: {
-    default_title: 'PM Co-Pilot',
+    default_title: 'Pocket PM',
     default_icon: {
       '16': 'icons/icon-16.png',
       '32': 'icons/icon-32.png',

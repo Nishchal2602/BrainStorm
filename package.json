@@ -1,9 +1,9 @@
 {
   "name": "pocket-pm",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "PM Co-Pilot — an AI Chrome extension that gives Product Managers contextual help on any page.",
+  "description": "Pocket PM — an AI Chrome extension that gives Product Managers contextual help on any page.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
