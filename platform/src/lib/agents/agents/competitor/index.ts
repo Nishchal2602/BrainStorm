@@ -1,4 +1,3 @@
-import type { TokenUsage } from '@/lib/types'
 import type { Agent } from '../../agent'
 import type { LlmPort } from '../../llm'
 import type { Logger } from '../../logger'
@@ -14,10 +13,9 @@ import type {
   MarketSegment,
 } from '../../types'
 import { getDocumentAnalysis, getReviewContext } from '../shared'
-import { buildProblemQueries, discoverLandscape } from './discovery'
+import { buildProblemQueries, discoverAndReason, type ReasoningResult } from './discovery'
 import { normalizeArchitecture, normalizeCapability, normalizeCategory, normalizeLandscape } from './extraction'
 import { buildCapabilityCells } from './matrix'
-import { reasonMarket, type ReasoningResult } from './reasoning'
 import { adjacentCategorySuggestions, landscapeSignals, weightDifferentiation } from './score'
 
 const EMPTY: CompetitorPayload = {
@@ -44,18 +42,7 @@ const EMPTY: CompetitorPayload = {
   recommendation: '',
 }
 
-const sumUsage = (...parts: (TokenUsage | undefined)[]): TokenUsage | undefined => {
-  const xs = parts.filter((x): x is TokenUsage => !!x)
-  if (!xs.length) return undefined
-  return xs.reduce((a, b) => ({
-    inputTokens: (a.inputTokens ?? 0) + (b.inputTokens ?? 0),
-    outputTokens: (a.outputTokens ?? 0) + (b.outputTokens ?? 0),
-    thoughtsTokens: (a.thoughtsTokens ?? 0) + (b.thoughtsTokens ?? 0),
-    totalTokens: (a.totalTokens ?? 0) + (b.totalTokens ?? 0),
-  }))
-}
-
-/** Pure fallback when the reasoning call fails — degrade gracefully, never invent white space. */
+/** Pure fallback when the reasoning section fails to parse — degrade gracefully, never invent white space. */
 function fallbackReasoning(
   analysis: ReturnType<typeof getDocumentAnalysis>,
   competitors: Competitor[],
@@ -147,9 +134,10 @@ function buildFindings(p: CompetitorPayload, competitors: Competitor[]): Finding
 
 /**
  * Competitor Intelligence — a market-positioning & white-space reasoning engine.
- * Problem-first grounded discovery of FACTS → a structured reasoning pass (segments,
- * relationship classes, strategic white space, differentiation) → positioning-weighted
- * score. Two LLM calls; everything else pure. Market-framed throughout.
+ * ONE grounded LLM call performs discovery AND market reasoning in the same pass
+ * (segments, relationship classes, strategic white space, differentiation scores);
+ * everything else is pure — normalization, capability matrix, positioning-weighted
+ * score, and a pure reasoning fallback when the analysis section fails to parse.
  */
 export class CompetitorIntelligenceAgent implements Agent {
   readonly id = 'competitor'
@@ -182,7 +170,10 @@ export class CompetitorIntelligenceAgent implements Agent {
 
     try {
       this.logger.info('competitor: queries', { productCategory, queries })
-      const { raw, usage: discoveryUsage } = await discoverLandscape(this.llm, queries, meta)
+      // THE one grounded call: discovery + market reasoning in a single pass.
+      const { raw, reasoning, rawText, usage: discoveryUsage } = await discoverAndReason(
+        this.llm, analysis, queries, meta,
+      )
       const { competitors, droppedLowConfidence } = normalizeLandscape(raw)
 
       // No competitors located — framed as coverage, never "no competition exists".
@@ -206,21 +197,25 @@ export class CompetitorIntelligenceAgent implements Agent {
 
       const cells = buildCapabilityCells(competitors, analysis?.keyCapabilities ?? [])
 
+      // Reasoning parsed from the same response; malformed/missing → pure fallback
+      // (discovered competitors are kept either way).
       let result: ReasoningResult
-      let reasoningUsage: TokenUsage | undefined
-      try {
-        const r = await reasonMarket(this.llm, analysis, competitors, cells, meta)
-        result = r.result
-        reasoningUsage = r.usage
-      } catch (e) {
-        this.logger.warn('competitor: reasoning failed, pure fallback', e instanceof Error ? e.message : e)
+      if (reasoning) {
+        result = reasoning
+      } else {
+        this.logger.warn('competitor: reasoning section missing/malformed, pure fallback')
         result = fallbackReasoning(analysis, competitors, cells)
       }
 
-      // Apply the reasoning pass's relationship classification onto the discovered competitors.
-      const relByName = new Map(result.relationships.map((r) => [r.competitor.toLowerCase(), r]))
+      // Apply relationship classification AFTER normalization, tolerating name
+      // drift between REL lines and canonicalized competitor names
+      // (exact → substring containment, e.g. "Jira" ↔ "Atlassian Jira").
+      const rels = result.relationships.map((r) => ({ ...r, key: r.competitor.toLowerCase().trim() }))
       for (const c of competitors) {
-        const r = relByName.get(c.name.toLowerCase())
+        const name = c.name.toLowerCase().trim()
+        const r =
+          rels.find((x) => x.key === name) ??
+          rels.find((x) => x.key.includes(name) || name.includes(x.key))
         if (r) {
           c.relationship = r.relationship
           c.relationshipReason = r.reason
@@ -248,6 +243,7 @@ export class CompetitorIntelligenceAgent implements Agent {
         differentiation,
         differentiationScores: result.scores,
         recommendation: result.recommendation,
+        raw: rawText,
       }
 
       // Strategic insights from the reasoning pass become synthesis findings.
@@ -281,7 +277,7 @@ export class CompetitorIntelligenceAgent implements Agent {
         confidence: differentiationScore / 100,
         data: payload,
         status: 'ok',
-        usage: sumUsage(discoveryUsage, reasoningUsage),
+        usage: discoveryUsage,
         durationMs: dur(),
       }
     } catch (e) {

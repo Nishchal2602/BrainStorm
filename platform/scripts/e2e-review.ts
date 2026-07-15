@@ -14,7 +14,10 @@ function assert(cond: unknown, msg: string) {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`)
 }
 
-// Fake LLM: returns just enough per call for the pipeline to reach a Completed run.
+// Fake LLM: returns just enough per call for the NEW 5-call pipeline to reach a
+// Completed run (labels: analyze · pm_review_agent · customer_voice_validate ·
+// competitor_discover_reason · synthesis). searchQueries stays empty so the CV
+// stage never touches the network (grounded fallback runs through this fake too).
 const fakeLlm: LlmPort = {
   async generateStructured<T>(req: { label?: string }): Promise<{ data: T }> {
     const label = req.label
@@ -32,13 +35,29 @@ const fakeLlm: LlmPort = {
           searchQueries: [],
           solutionCategory: 'Enterprise AI Assistant',
           keyCapabilities: ['RAG'],
+          goals: ['Reduce context re-supply'],
+          keyRequirements: ['Ingest company docs'],
+          constraints: ['SOC2'],
+          workflowSummary: 'PM asks; assistant answers with org context.',
+          differentiators: ['org-context awareness'],
+          architectureSummary: 'RAG over internal knowledge.',
+          successMetrics: ['Weekly active PMs'],
           confidence: 0.8,
           rationale: 'clear',
         } as T,
       }
     }
-    if (label === 'customer_voice_hypotheses') return { data: { hypotheses: [] } as T }
-    if (label === 'customer_voice_verify') return { data: { judgments: [] } as T }
+    // Merged Customer Voice call: claims + judgments in ONE response.
+    if (label === 'customer_voice_validate') {
+      return {
+        data: {
+          hypotheses: [
+            { id: 'h1', statement: 'PMs re-supply company context to AI every session', category: 'problem', confidence: 0.8 },
+          ],
+          judgments: [],
+        } as T,
+      }
+    }
     // synthesis (recommendation engine)
     return {
       data: {
@@ -57,12 +76,55 @@ const fakeLlm: LlmPort = {
     }
   },
   async generateText(req: { label?: string }) {
-    if (req.label === 'pm_review') {
+    // Staff-PM readiness reviewer (XML, document-internal — no web search).
+    if (req.label === 'pm_review_agent') {
       return {
-        text: '## Risks\n- Adoption risk\n## Critical Unknowns\n- Undefined success metric\n## Implementation Considerations\n- Data integration effort\n## If I Were the PM\n1. Validate the core problem with 5 PMs',
+        text: `<review>
+  <strengths><item>Problem statement is clear</item></strengths>
+  <critical>
+    <issue>
+      <title>Undefined success metric</title>
+      <where>Goals</where>
+      <why>No measurable target is stated</why>
+      <impact>Engineering cannot verify completion</impact>
+      <fix>Add a numeric success metric</fix>
+      <confidence>High</confidence>
+    </issue>
+  </critical>
+  <medium>
+    <issue>
+      <title>Data integration effort unscoped</title>
+      <why>Sources to ingest are not listed</why>
+      <fix>Enumerate the systems to integrate</fix>
+      <confidence>Medium</confidence>
+    </issue>
+  </medium>
+  <minor></minor>
+  <missing>
+    <requirements><item>Access-control rules for retrieved context</item></requirements>
+    <userFlows></userFlows>
+    <edgeCases></edgeCases>
+    <acceptanceCriteria></acceptanceCriteria>
+    <nonFunctional><item>Latency budget for answers</item></nonFunctional>
+  </missing>
+  <questions>
+    <product><item>Which PM segment first?</item></product>
+    <engineering></engineering>
+  </questions>
+  <score>
+    <criticalIssues>1</criticalIssues>
+    <mediumIssues>1</mediumIssues>
+    <minorIssues>0</minorIssues>
+    <readiness>58</readiness>
+    <decision>Build with Changes</decision>
+    <confidence>High</confidence>
+    <rationale>Clear problem, but success measurement and integration scope are missing.</rationale>
+  </score>
+</review>`,
         sources: [],
       }
     }
+    // competitor_discover_reason + CV grounded fallback: zero-competitor / no-docs path.
     return { text: 'NO COMPETITORS FOUND', sources: [] }
   },
 }

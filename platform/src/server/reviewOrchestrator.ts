@@ -16,10 +16,17 @@ import { DocumentAnalyzer } from '@/lib/agents/analyzer'
 import { Synthesizer } from '@/lib/agents/synthesis'
 import { CustomerVoiceAgent } from '@/lib/agents/agents/customerVoice'
 import { CompetitorIntelligenceAgent } from '@/lib/agents/agents/competitor'
-import { pmReview } from '@/lib/features/pmReview'
-import type { AgentContext, AgentResult, CompetitorPayload, CustomerVoicePayload } from '@/lib/agents/types'
+import { PmReviewAgent } from '@/lib/agents/agents/pmReview'
+import { withTimeout } from '@/lib/agents/runtime'
+import type { ReadinessReview } from '@/lib/features/pmReview'
+import type {
+  AgentContext,
+  AgentResult,
+  CompetitorPayload,
+  CustomerVoicePayload,
+  PmReviewAgentPayload,
+} from '@/lib/agents/types'
 import type { Prisma, ReviewStatus } from '@/generated/prisma'
-import type { Section } from '@/lib/types'
 
 type StageKey = 'sharedAnalysis' | 'pmReview' | 'customerVoice' | 'competitor' | 'recommendation'
 type StageState = 'pending' | 'running' | 'completed' | 'failed'
@@ -43,21 +50,30 @@ async function retry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
   throw last
 }
 
-/** Map the reused PM Review prompt's parsed sections → the structured PMReviewResult. */
-function mapPmReview(sections: Section[]): PMReviewResult {
-  const bulletsFor = (needle: string): string[] =>
-    sections.find((s) => s.heading.toLowerCase().includes(needle) && s.bullets?.length)?.bullets ?? []
-  const insight = sections.find((s) => s.tone === 'insight' && s.body)
+/** Per-stage budget — a hung LLM/grounding call fails the stage instead of hanging the run. */
+const STAGE_TIMEOUT_MS = 60_000
+
+const CONFIDENCE_NUM: Record<string, number> = { High: 0.9, Medium: 0.6, Low: 0.35 }
+
+/** Map the Staff-PM readiness review (XML agent output) → the structured PMReviewResult.
+ *  Same DB shape as before — only the producer changed (mirrored in lemma/reviewStages). */
+function mapPmReview(review: ReadinessReview): PMReviewResult {
+  const summary = [
+    review.decision ? `${review.decision}` : 'PM Review completed',
+    review.readiness != null ? `— PRD readiness ${review.readiness}/100.` : '.',
+    review.rationale ?? '',
+  ]
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
   return {
-    summary: insight?.body ?? 'PM Review completed.',
-    risks: bulletsFor('risk'),
-    rolloutRisks: bulletsFor('implementation'),
-    missingRequirements: bulletsFor('unknown'),
-    openQuestions: bulletsFor('unknown'),
-    suggestedExperiments: bulletsFor('if i were').length
-      ? bulletsFor('if i were')
-      : bulletsFor('recommend'),
-    confidence: 0.7,
+    summary,
+    risks: [...review.critical, ...review.medium].map((i) => i.title),
+    rolloutRisks: review.missingNfrs,
+    missingRequirements: review.missingRequirements,
+    openQuestions: [...review.productQuestions, ...review.engineeringQuestions],
+    suggestedExperiments: review.minor.map((i) => i.title),
+    confidence: review.reviewerConfidence ? CONFIDENCE_NUM[review.reviewerConfidence] ?? 0.6 : 0.6,
   }
 }
 
@@ -75,6 +91,7 @@ export class ReviewOrchestrator {
   /** True when running on the real LLM backend (not an injected test fake). */
   private readonly requiresBackend: boolean
   private readonly analyzer: DocumentAnalyzer
+  private readonly pm: PmReviewAgent
   private readonly cv: CustomerVoiceAgent
   private readonly competitor: CompetitorIntelligenceAgent
   private readonly synth: Synthesizer
@@ -83,6 +100,7 @@ export class ReviewOrchestrator {
     this.requiresBackend = !deps.llm
     this.llm = deps.llm ?? new ClaudeLlmAdapter('claude-sonnet-4-6')
     this.analyzer = new DocumentAnalyzer(this.llm, consoleLogger)
+    this.pm = new PmReviewAgent(consoleLogger, this.llm)
     this.cv = new CustomerVoiceAgent(consoleLogger, this.llm)
     this.competitor = new CompetitorIntelligenceAgent(consoleLogger, this.llm)
     this.synth = new Synthesizer(this.llm, consoleLogger)
@@ -129,7 +147,9 @@ export class ReviewOrchestrator {
 
       // 1 — Shared Document Analysis (persisted on the run; feeds every later stage).
       await setStatus('sharedAnalysis', 'running')
-      const { analysis } = await retry(() => this.analyzer.analyze(ctx))
+      const { analysis } = await retry(() =>
+        withTimeout(this.analyzer.analyze(ctx), STAGE_TIMEOUT_MS, 'analyze'),
+      )
       await prisma.reviewRun.update({
         where: { id: reviewRunId },
         data: { sharedAnalysis: analysis as unknown as Prisma.InputJsonValue },
@@ -141,15 +161,29 @@ export class ReviewOrchestrator {
 
       const results: AgentResult[] = []
 
-      // 2 — PM Review (reuse the existing PM Review prompt; soft-fail).
+      // 2 — PM Review (the Staff-PM readiness agent — document-internal, no web
+      // search; soft-fail). Its findings join `results` so synthesis weighs them.
       await this.stage('pmReview', setStatus, async () => {
-        const pm = await retry(() => this.runPmReview(ctx))
-        await prisma.$transaction((tx) => persistPmReview(tx, reviewRunId, pm))
+        const res = (await withTimeout(
+          this.pm.execute(ctx),
+          STAGE_TIMEOUT_MS,
+          'pm_review',
+        )) as AgentResult<PmReviewAgentPayload>
+        results.push(res)
+        if (res.data?.review) {
+          const pm = mapPmReview(res.data.review)
+          await prisma.$transaction((tx) => persistPmReview(tx, reviewRunId, pm))
+        }
+        if (res.status !== 'ok') throw new Error(res.error || 'pm review error')
       })
 
       // 3 — Customer Voice (agent is non-throwing).
       await this.stage('customerVoice', setStatus, async () => {
-        const res = (await this.cv.execute(ctx)) as AgentResult<CustomerVoicePayload>
+        const res = (await withTimeout(
+          this.cv.execute(ctx),
+          STAGE_TIMEOUT_MS,
+          'customer_voice',
+        )) as AgentResult<CustomerVoicePayload>
         results.push(res)
         if (res.data) {
           await prisma.$transaction((tx) =>
@@ -161,7 +195,11 @@ export class ReviewOrchestrator {
 
       // 4 — Competitor Intelligence.
       await this.stage('competitor', setStatus, async () => {
-        const res = (await this.competitor.execute(ctx)) as AgentResult<CompetitorPayload>
+        const res = (await withTimeout(
+          this.competitor.execute(ctx),
+          STAGE_TIMEOUT_MS,
+          'competitor',
+        )) as AgentResult<CompetitorPayload>
         results.push(res)
         if (res.data) {
           await prisma.$transaction((tx) =>
@@ -173,7 +211,9 @@ export class ReviewOrchestrator {
 
       // 5 — Recommendation Engine (terminal output; failure here fails the run).
       await setStatus('recommendation', 'running')
-      const { report } = await retry(() => this.synth.synthesize(ctx, results))
+      const { report } = await retry(() =>
+        withTimeout(this.synth.synthesize(ctx, results), STAGE_TIMEOUT_MS, 'synthesis'),
+      )
       await prisma.$transaction(async (tx) => {
         await persistRecommendation(tx, reviewRunId, productId, featureId, actorId, report)
         await recordEvent(tx, {
@@ -219,19 +259,6 @@ export class ReviewOrchestrator {
       consoleLogger.warn(`stage ${key} failed`, e instanceof Error ? e.message : e)
       await setStatus(key, 'failed')
     }
-  }
-
-  private async runPmReview(ctx: AgentContext): Promise<PMReviewResult> {
-    const user = `${ctx.document}\n\nReview the document above and produce the structured PM Review.`
-    const { text, sources } = await this.llm.generateText({
-      system: pmReview.systemInstructions,
-      user,
-      webSearch: { maxUses: 8 },
-      maxTokens: 6000,
-      label: 'pm_review',
-      meta: ctx.metadata?.clientId ? { clientId: String(ctx.metadata.clientId) } : undefined,
-    })
-    return mapPmReview(pmReview.parse(text, sources).sections)
   }
 
   private async loadContext(reviewRunId: string) {

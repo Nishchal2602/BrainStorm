@@ -76,6 +76,8 @@ export class Orchestrator {
       ranAgentIds: toRun.map((a) => a.id),
       skippedAgentIds,
       usage,
+      analyzeUsage,
+      synthesisUsage: synthUsage,
     }
   }
 

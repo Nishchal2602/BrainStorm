@@ -6,15 +6,16 @@ import { now } from '../../runtime'
 import type { AgentContext, AgentResult, CustomerVoicePayload } from '../../types'
 import { getDocumentAnalysis, getReviewContext } from '../shared'
 import { buildCustomerVoice } from './build'
-import { extractHypotheses } from './hypothesis'
 import { buildAllQueries } from './queries'
 import { searchReddit } from './reddit'
 import { groundedFallback } from './retrieval'
 import { scoreHypotheses } from './score'
-import { buildUnits, verifyEvidence } from './verify'
+import { validateClaims } from './validate'
+import { buildUnits, selectTopUnitsForValidation } from './verify'
 
 const MIN_REDDIT_POSTS = 3
 const MAX_QUERIES = 15
+const MAX_VALIDATION_UNITS = 24
 
 const EMPTY: CustomerVoicePayload = {
   hypotheses: [],
@@ -43,11 +44,12 @@ function sumUsage(...parts: (TokenUsage | undefined)[]): TokenUsage | undefined 
 }
 
 /**
- * Customer Voice — hypothesis validation engine. Extract the assumptions the product
- * depends on (+ the customer vernacular for each) → build customer-language queries
- * → fetch Reddit (grounding fallback) → verify each comment/post with problem/persona/
- * product relevance → quality-filter + product-form confidence → per-hypothesis verdicts.
- * Evidence is verbatim and traceable; never asserts demand is absent.
+ * Customer Voice — claim validation engine, ONE LLM call. Analysis-derived
+ * queries → fetch Reddit (grounding fallback) → cap/diversify units → a single
+ * merged call that extracts the product's distinct claims AND judges every unit
+ * against them (problem/persona/product relevance) → pure quality-filter +
+ * product-form confidence → per-claim verdicts. Evidence is verbatim and
+ * traceable; never asserts demand is absent.
  */
 export class CustomerVoiceAgent implements Agent {
   readonly id = 'customer_voice'
@@ -80,21 +82,12 @@ export class CustomerVoiceAgent implements Agent {
     }
 
     try {
-      const { hypotheses, usage: hypUsage } = await extractHypotheses(this.llm, analysis, problem, meta)
-      if (!hypotheses.length) {
-        return { agentId: this.id, summary: 'Could not derive validation hypotheses from the document.', findings: [], confidence: 0, data: EMPTY, status: 'ok', usage: hypUsage, durationMs: dur() }
-      }
-      this.logger.info('customer_voice: hypotheses', {
-        count: hypotheses.length,
-        statements: hypotheses.map((h) => `${h.category}: ${h.statement}`),
-      })
-
-      const queries = buildAllQueries(hypotheses, analysis, MAX_QUERIES)
+      // Retrieval first — queries come from the shared analysis (no LLM needed).
+      const queries = buildAllQueries(analysis, MAX_QUERIES)
       const relevanceTerms = [
         analysis?.coreProblem ?? '',
         ...(analysis?.synonyms ?? []),
-        ...hypotheses.map((h) => h.statement),
-        ...hypotheses.flatMap((h) => h.customerLanguage),
+        ...(analysis?.searchQueries ?? []),
       ].filter(Boolean)
       this.logger.info('customer_voice: queries', { queries })
 
@@ -109,8 +102,21 @@ export class CustomerVoiceAgent implements Agent {
         this.logger.warn('customer_voice: reddit unavailable, grounding fallback', { posts: docs.length })
       }
 
-      const units = buildUnits(docs)
-      const { judgments, usage: verifyUsage } = await verifyEvidence(this.llm, hypotheses, units, analysis, meta)
+      // THE one merged call: claim extraction + evidence judgment over the
+      // capped, diversity-selected units. Scoring stays pure.
+      const units = selectTopUnitsForValidation(buildUnits(docs), MAX_VALIDATION_UNITS)
+      const { hypotheses, judgments, usage: valUsage } = await validateClaims(
+        this.llm, analysis, review, problem, units, meta,
+      )
+      if (!hypotheses.length) {
+        return { agentId: this.id, summary: 'Could not derive validation claims from the document.', findings: [], confidence: 0, data: EMPTY, status: 'ok', usage: sumUsage(fbUsage, valUsage), durationMs: dur() }
+      }
+      this.logger.info('customer_voice: claims', {
+        count: hypotheses.length,
+        statements: hypotheses.map((h) => `${h.category}: ${h.statement}`),
+        unitsJudged: units.length,
+      })
+
       const score = scoreHypotheses(hypotheses, judgments, units, docs.length)
       const built = buildCustomerVoice(score)
 
@@ -137,7 +143,7 @@ export class CustomerVoiceAgent implements Agent {
         confidence: built.confidence,
         data: built.payload,
         status: 'ok',
-        usage: sumUsage(hypUsage, fbUsage, verifyUsage),
+        usage: sumUsage(fbUsage, valUsage),
         durationMs: dur(),
       }
     } catch (e) {

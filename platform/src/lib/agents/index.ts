@@ -8,7 +8,7 @@ import { Synthesizer } from './synthesis'
 import { CompetitorIntelligenceAgent } from './agents/competitor'
 import { ComplianceAgent } from './agents/compliance'
 import { CustomerVoiceAgent } from './agents/customerVoice'
-import { PrdQualityAgent } from './agents/prdQuality'
+import { PmReviewAgent } from './agents/pmReview'
 import { ResearchAgent } from './agents/research'
 import { SolutionCriticAgent } from './agents/solutionCritic'
 
@@ -21,6 +21,7 @@ export { Orchestrator } from './orchestrator'
 export { reportToSections } from './synthesis'
 export { customerVoiceSections } from './agents/customerVoice/sections'
 export { competitorSections } from './agents/competitor/sections'
+export { pmReviewAgentSections } from './agents/pmReview'
 
 export interface CreateOrchestratorDeps {
   /** Active model (Gemini in practice; ignored when a Gemini/proxy key is set). */
@@ -44,7 +45,7 @@ export function createDefaultOrchestrator(deps: CreateOrchestratorDeps): Orchest
     .register(new CompetitorIntelligenceAgent(logger, llm))
     .register(new ComplianceAgent(logger))
     .register(new SolutionCriticAgent(logger))
-    .register(new PrdQualityAgent(logger))
+    .register(new PmReviewAgent(logger, llm))
 
   return new Orchestrator({
     registry,

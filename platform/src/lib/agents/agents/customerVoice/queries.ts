@@ -1,12 +1,11 @@
 import type { DocumentAnalysis } from '../../types'
-import type { Hypothesis } from './hypothesis'
 
 /**
- * Pure query builder. Turns a hypothesis's raw material (customer language +
- * search intent) into concrete Reddit/web searches — supporting, contradicting,
- * synonym, and long-tail. Kept pure (no LLM, no I/O) so retrieval can be tuned
- * without touching any model schema. We search reddit.com directly, so queries
- * are clean phrases (no "reddit" suffix, which would just filter on that word).
+ * Pure query builder. Retrieval now runs BEFORE the (single) validation call, so
+ * queries derive from the shared DocumentAnalysis — its customer-vernacular
+ * `searchQueries` + `synonyms` + problem terms — instead of per-hypothesis
+ * customer language. Kept pure (no LLM, no I/O). We search reddit.com directly,
+ * so queries are clean phrases (no "reddit" suffix).
  */
 
 const STOP = new Set([
@@ -31,26 +30,6 @@ function keyTerms(s: string, n: number): string[] {
   return out
 }
 
-/** Per-hypothesis searches, prioritized (best signal first). */
-export function buildQueries(h: Hypothesis, analysis?: DocumentAnalysis): string[] {
-  const phrases = h.customerLanguage.map(clean).filter((p) => p.length >= 3)
-  const topic = keyTerms(`${h.statement} ${h.searchIntent}`, 3).join(' ')
-
-  const supporting = phrases
-  // Quoted exact-phrase variants for the two strongest multi-word phrases.
-  const quoted = phrases.filter((p) => p.includes(' ')).slice(0, 2).map((p) => `"${p}"`)
-  // Satisfaction templates → surface people who do NOT have the problem (so the
-  // verifier can find contradicting evidence and Mixed verdicts can occur).
-  const contradicting = topic
-    ? [`${topic} works well`, `happy with ${topic}`, `no problem with ${topic}`]
-    : []
-  const synonym = (analysis?.synonyms ?? []).map(clean).filter(Boolean)
-  const longTail = h.searchIntent ? [keyTerms(h.searchIntent, 8).join(' ')].filter(Boolean) : []
-
-  // Interleave categories so a single category can't dominate after capping.
-  return interleave([supporting, quoted, contradicting, synonym, longTail])
-}
-
 /** Round-robin merge so each list contributes before any list repeats. */
 function interleave(lists: string[][]): string[] {
   const out: string[] = []
@@ -61,14 +40,26 @@ function interleave(lists: string[][]): string[] {
   return out
 }
 
-/** Union of all hypotheses' queries, interleaved across hypotheses, deduped + capped. */
-export function buildAllQueries(
-  hypotheses: Hypothesis[],
-  analysis: DocumentAnalysis | undefined,
-  cap: number,
-): string[] {
-  const perHyp = hypotheses.map((h) => buildQueries(h, analysis))
-  const ordered = interleave(perHyp)
+/** Supporting / quoted / contradicting / synonym / long-tail searches from the
+ * analysis alone, interleaved so no category dominates, deduped + capped. */
+export function buildAllQueries(analysis: DocumentAnalysis | undefined, cap: number): string[] {
+  const searchQueries = (analysis?.searchQueries ?? []).map(clean).filter((p) => p.length >= 3)
+  const synonyms = (analysis?.synonyms ?? []).map(clean).filter((p) => p.length >= 3)
+  const topic = keyTerms(`${analysis?.coreProblem ?? ''} ${analysis?.solutionCategory ?? ''}`, 3).join(' ')
+
+  const supporting = searchQueries
+  // Quoted exact-phrase variants for the two strongest multi-word queries.
+  const quoted = searchQueries.filter((p) => p.includes(' ')).slice(0, 2).map((p) => `"${p}"`)
+  // Satisfaction templates → surface people who do NOT have the problem (so the
+  // validator can find contradicting evidence and Mixed verdicts can occur).
+  const contradicting = topic
+    ? [`${topic} works well`, `happy with ${topic}`, `no problem with ${topic}`]
+    : []
+  const longTail = analysis?.coreProblem
+    ? [keyTerms(analysis.coreProblem, 8).join(' ')].filter((q) => q.length >= 3)
+    : []
+
+  const ordered = interleave([supporting, quoted, contradicting, synonyms, longTail])
   const seen = new Set<string>()
   const out: string[] = []
   for (const raw of ordered) {

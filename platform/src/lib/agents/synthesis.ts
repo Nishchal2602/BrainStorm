@@ -1,12 +1,13 @@
 import type { Section, TokenUsage } from '@/lib/types'
 import type { LlmPort } from './llm'
 import type { Logger } from './logger'
-import { getDocumentAnalysis } from './agents/shared'
+import { compactContext, getDocumentAnalysis, getReviewContext } from './agents/shared'
 import type {
   AgentContext,
   AgentResult,
   BuildDecision,
   Decision,
+  Finding,
   SynthesisReport,
 } from './types'
 
@@ -62,7 +63,7 @@ const SCHEMA = {
   ],
 } as const
 
-const SYSTEM = `You are a senior product leader making a build decision. You are given a product document plus structured findings from specialist agents (customer voice, research, competitor, compliance, solution critic, PRD quality). Some agents may report nothing yet — weigh only real signal.
+export const SYNTHESIS_SYSTEM = `You are a senior product leader making a build decision. You are given a product document plus structured findings from specialist agents (customer voice, research, competitor, compliance, solution critic, PRD readiness). Some agents may report nothing yet — weigh only real signal.
 
 Reason ACROSS the findings — do not merely concatenate them. Resolve tension between supporting and contradicting evidence, weigh risks and missing requirements, and reach ONE decision:
 - "build": strong evidence, manageable risk, requirements clear.
@@ -72,15 +73,45 @@ Reason ACROSS the findings — do not merely concatenate them. Resolve tension b
 
 Customer Voice rule: a customer-voice "insufficient public evidence" / "no evidence found" finding means relevant public discussion was not located — it is NOT evidence that demand is absent. Treat missing evidence as a reason to validate_first, never as contradicting evidence or grounds for do_not_build. Only findings that report actual contradicting discussions count against demand.
 
+PRD readiness rule: pm_review findings (missing requirements/flows/edge cases/acceptance criteria, readiness score) measure whether the DOCUMENT is buildable — weigh them toward "build_with_changes" and name the required changes in the rationale. They are NOT evidence about demand or idea quality. Weigh each readiness finding by its stated confidence.
+
 Set decision.confidence in [0,1] reflecting how strong the evidence is (low when agents returned little). decision.rationale = the 2–5 reasons that drove the call. Be specific to THIS document; never invent evidence not present in the inputs. Keep every list concise and decision-relevant.`
+
+// Synthesis reasons over SIGNALS, not reports: per agent, findings are sorted by
+// severity → confidence → evidence count, capped, and detail-truncated so one
+// verbose agent can't dominate the prompt.
+const MAX_FINDINGS_PER_AGENT = 10
+const MAX_DETAIL_CHARS = 220
+const SEVERITY_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 }
+
+function topFindings(findings: Finding[]): Finding[] {
+  return [...findings]
+    .sort(
+      (a, b) =>
+        (SEVERITY_RANK[b.severity ?? ''] ?? 0) - (SEVERITY_RANK[a.severity ?? ''] ?? 0) ||
+        (b.confidence ?? 0) - (a.confidence ?? 0) ||
+        (b.evidence?.length ?? 0) - (a.evidence?.length ?? 0),
+    )
+    .slice(0, MAX_FINDINGS_PER_AGENT)
+}
+
+const truncate = (s: string, max: number): string =>
+  s.length <= max ? s : s.slice(0, max - 1).trimEnd() + '…'
 
 function serializeResults(results: AgentResult[]): string {
   const active = results.filter((r) => r.status === 'ok' || r.status === 'error' || r.status === 'timeout')
   if (!active.length) return '(no agent findings)'
   return active
     .map((r) => {
-      const findings = r.findings.length
-        ? r.findings.map((f) => `    - [${f.kind ?? 'note'}] ${f.title}: ${f.detail}`).join('\n')
+      const top = topFindings(r.findings)
+      const findings = top.length
+        ? top
+            .map((f) => {
+              const sev = f.severity ? `/${f.severity}` : ''
+              const conf = f.confidence != null ? ` (conf ${f.confidence.toFixed(2)})` : ''
+              return `    - [${f.kind ?? 'note'}${sev}] ${f.title}: ${truncate(f.detail, MAX_DETAIL_CHARS)}${conf}`
+            })
+            .join('\n')
         : '    (none)'
       const status = r.status === 'ok' ? '' : ` [${r.status}]`
       return `- ${r.agentId}${status} (confidence ${r.confidence}): ${r.summary}\n${findings}`
@@ -104,7 +135,10 @@ export class Synthesizer {
   ): Promise<{ report: SynthesisReport; usage?: TokenUsage }> {
     this.logger.debug('synthesize', { agentResults: results.length })
     const analysis = getDocumentAnalysis(ctx)
-    const parts = ['PRODUCT DOCUMENT:', ctx.document, '']
+    // Compact structured context instead of the full document — synthesis reasons
+    // over signals; the readiness/evidence agents already read the source.
+    const context = compactContext(analysis, getReviewContext(ctx))
+    const parts = [context || `PRODUCT DOCUMENT (excerpt):\n${ctx.document.slice(0, 4000)}`, '']
     if (analysis) {
       parts.push(
         `DOCUMENT-ANALYSIS CONFIDENCE: ${analysis.confidence.toFixed(2)} (how clearly the document stated the problem). If low (≲0.5), the problem is under-specified — prefer "validate_first" and temper your decision confidence accordingly.`,
@@ -115,7 +149,7 @@ export class Synthesizer {
     const user = parts.join('\n')
 
     const { data, usage } = await this.llm.generateStructured<SynthesisReport>({
-      system: SYSTEM,
+      system: SYNTHESIS_SYSTEM,
       user,
       schema: SCHEMA as object,
       maxTokens: 4000,
