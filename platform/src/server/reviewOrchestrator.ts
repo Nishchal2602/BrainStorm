@@ -3,6 +3,7 @@ import { config } from '@/lib/config'
 import { getStorage } from '@/lib/storage'
 import { recordEvent } from '@/server/timeline'
 import { assertTransition, REVIEW_FLOW } from '@/server/stateMachines'
+import { extractDocumentText } from '@/server/documentText'
 import {
   persistCompetitorLandscape,
   persistCustomerEvidence,
@@ -36,7 +37,16 @@ const STAGES: StageKey[] = ['sharedAnalysis', 'pmReview', 'customerVoice', 'comp
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/** Retry transient LLM errors once (per the plan's "retries where appropriate"). */
+/** A rate-limit / overload error surfaced by the Gemini transport — the transport
+ *  already backs off and retries these, so the orchestrator must NOT re-fire them
+ *  (a second attempt just hammers the same per-minute limit). */
+function isRateLimit(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  return /rate limit|429|overloaded|503|quota/i.test(msg)
+}
+
+/** Retry a genuinely transient LLM error once. Rate-limit errors are excluded —
+ *  the transport owns 429 backoff; retrying here only amplifies the limit. */
 async function retry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
   let last: unknown
   for (let i = 0; i < attempts; i++) {
@@ -44,14 +54,16 @@ async function retry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
       return await fn()
     } catch (e) {
       last = e
-      if (i < attempts - 1) await sleep(800)
+      if (isRateLimit(e) || i >= attempts - 1) break
+      await sleep(1500)
     }
   }
   throw last
 }
 
-/** Per-stage budget — a hung LLM/grounding call fails the stage instead of hanging the run. */
-const STAGE_TIMEOUT_MS = 60_000
+/** Per-stage budget — a hung LLM/grounding call fails the stage instead of hanging
+ *  the run. 90s gives Haiku headroom for the web-grounded competitor call. */
+const STAGE_TIMEOUT_MS = 90_000
 
 const CONFIDENCE_NUM: Record<string, number> = { High: 0.9, Medium: 0.6, Low: 0.35 }
 
@@ -117,7 +129,7 @@ export class ReviewOrchestrator {
     try {
       if (this.requiresBackend && !config.hasBackend) {
         throw new Error(
-          'No AI backend configured — set GEMINI_API_KEY in platform/.env, then restart `npm run dev`.',
+          'No AI backend configured — set ANTHROPIC_API_KEY (or GEMINI_API_KEY) in platform/.env, then restart `npm run dev`.',
         )
       }
       const { document, productName, industry, featureName, productId, featureId } =
@@ -142,6 +154,12 @@ export class ReviewOrchestrator {
             familiarityLevel: 'some_knowledge',
           },
           clientId: actorId,
+          // Server-side, Reddit is throttled for datacenter IPs, so Customer Voice's
+          // grounded web-search fallback is its main evidence source here — keep it
+          // ENABLED so CV returns real evidence instead of "insufficient." It's
+          // surfaced at reduced confidence (see the CV agent), and web search works
+          // on Haiku via allowed_callers:['direct'] in the transport.
+          skipGroundedFallback: false,
         },
       }
 
@@ -274,7 +292,7 @@ export class ReviewOrchestrator {
     if (!prd?.documentFileId) throw new Error('No PRD document attached to this review')
     const file = await prisma.file.findUniqueOrThrow({ where: { id: prd.documentFileId } })
     const bytes = await getStorage().get(file.storagePath)
-    const document = bytes.toString('utf8')
+    const document = await extractDocumentText(bytes, { mimeType: file.mimeType, fileName: file.fileName })
     if (!document.trim()) throw new Error('PRD document is empty or not text-readable')
     return {
       document,

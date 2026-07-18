@@ -60,7 +60,7 @@ export class LemmaReviewRunner {
         reviewRunId,
         run.productId,
         actorId,
-        'No AI backend configured — set GEMINI_API_KEY in platform/.env, then restart `npm run dev`.',
+        'No AI backend configured — set ANTHROPIC_API_KEY (or GEMINI_API_KEY) in platform/.env, then restart `npm run dev`.',
       )
       return
     }

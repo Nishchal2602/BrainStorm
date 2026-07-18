@@ -132,7 +132,7 @@ export class DocumentAnalyzer {
         system: ANALYZE_SYSTEM,
         user,
         schema: SCHEMA as object,
-        maxTokens: 1000,
+        maxTokens: 2000,
         label: 'analyze',
         meta: ctx.metadata?.clientId ? { clientId: String(ctx.metadata.clientId) } : undefined,
       })

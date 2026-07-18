@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { getStorage } from '@/lib/storage'
 import { recordEvent } from '@/server/timeline'
+import { extractDocumentText } from '@/server/documentText'
 import {
   persistCompetitorLandscape,
   persistCustomerEvidence,
@@ -26,8 +27,9 @@ import type {
 } from '@/lib/agents/types'
 import type { Prisma } from '@/generated/prisma'
 
-/** Per-stage budget — a hung LLM/grounding call fails the stage instead of hanging the run. */
-const STAGE_TIMEOUT_MS = 60_000
+/** Per-stage budget — a hung LLM/grounding call fails the stage instead of hanging
+ *  the run. 90s gives Haiku headroom for the web-grounded competitor call. */
+const STAGE_TIMEOUT_MS = 90_000
 
 /**
  * Reusable review-stage helpers shared by the Lemma runner. The existing
@@ -56,7 +58,8 @@ export async function loadReviewContext(reviewRunId: string, actorId: string): P
       : null
   if (!prd?.documentFileId) throw new Error('No PRD document attached to this review')
   const file = await prisma.file.findUniqueOrThrow({ where: { id: prd.documentFileId } })
-  const document = (await getStorage().get(file.storagePath)).toString('utf8')
+  const bytes = await getStorage().get(file.storagePath)
+  const document = await extractDocumentText(bytes, { mimeType: file.mimeType, fileName: file.fileName })
   if (!document.trim()) throw new Error('PRD document is empty or not text-readable')
 
   const featureName = run.feature?.name
@@ -75,6 +78,10 @@ export async function loadReviewContext(reviewRunId: string, actorId: string): P
         familiarityLevel: 'some_knowledge',
       },
       clientId: actorId,
+      // Server-side: keep CV's grounded web-search fallback ENABLED (see
+      // reviewOrchestrator) so CV has an evidence source when server Reddit is
+      // empty; surfaced at reduced confidence by the CV agent.
+      skipGroundedFallback: false,
     },
   }
   return { ctx, productId: run.productId, featureId: run.featureId, productName: run.product.name }

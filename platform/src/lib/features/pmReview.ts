@@ -39,8 +39,19 @@ ${STYLE_RULES}
 
 Do NOT summarize the document. Do NOT rewrite the PRD. Avoid generic advice like "add more detail" — every fix must state exactly what information needs to be added, and where possible include a copy-pasteable suggested addition.
 
-Respond with XML ONLY — exactly this structure, no prose outside the tags:
+Report the most important issues only — at most 5 critical, 4 medium, 3 minor, highest-impact first. Be concise: one or two sentences per field, and do not pad with low-value issues.
+
+Respond with XML ONLY — exactly this structure, no prose outside the tags. Emit the <score> block FIRST so the verdict is captured even in a long response:
 <review>
+  <score>
+    <criticalIssues>count</criticalIssues>
+    <mediumIssues>count</mediumIssues>
+    <minorIssues>count</minorIssues>
+    <readiness>0-100</readiness>
+    <decision>Ready to Build | Build with Changes | Needs Major Revision</decision>
+    <confidence>High|Medium|Low — how certain YOU are of this assessment (independent of the score)</confidence>
+    <rationale>2-4 sentences explaining the score and decision</rationale>
+  </score>
   <strengths>
     <item>a part of the PRD that is implementation-ready as written (2-5 items; leave the tag empty if none)</item>
   </strengths>
@@ -68,18 +79,9 @@ Respond with XML ONLY — exactly this structure, no prose outside the tags:
     <product><item>behaviour decisions the PM must make</item></product>
     <engineering><item>implementation choices to raise with engineering</item></engineering>
   </questions>
-  <score>
-    <criticalIssues>count</criticalIssues>
-    <mediumIssues>count</mediumIssues>
-    <minorIssues>count</minorIssues>
-    <readiness>0-100</readiness>
-    <decision>Ready to Build | Build with Changes | Needs Major Revision</decision>
-    <confidence>High|Medium|Low — how certain YOU are of this assessment (independent of the score)</confidence>
-    <rationale>2-4 sentences explaining the score and decision</rationale>
-  </score>
 </review>
 
-Critical = blocks engineering from implementing. Medium = important but not blocking. Minor = nice-to-have. Populate <criticalIssues>/<mediumIssues>/<minorIssues> with the counts of issue blocks you produced.`
+Critical = blocks engineering from implementing (max 5). Medium = important but not blocking (max 4). Minor = nice-to-have (max 3). Populate <criticalIssues>/<mediumIssues>/<minorIssues> with the counts of issue blocks you produced.`
 
 // --- XML tag extraction (pure; tolerant of missing/extra whitespace) ---
 

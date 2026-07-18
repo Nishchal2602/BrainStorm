@@ -26,8 +26,20 @@ export const config = {
   get geminiModel(): string {
     return env('GEMINI_MODEL') || 'gemini-2.5-flash'
   },
+  /** Anthropic Claude API key (server env — see usesAnthropic). */
+  get anthropicApiKey(): string {
+    return env('ANTHROPIC_API_KEY')
+  },
+  /** Claude model id used for every call when on the Anthropic backend. */
+  get anthropicModel(): string {
+    return env('ANTHROPIC_MODEL') || 'claude-sonnet-5'
+  },
   get demoMode(): boolean {
     return env('DEMO_MODE') === 'true'
+  },
+  /** True when an Anthropic key is configured (takes precedence over Gemini + proxy). */
+  get usesAnthropic(): boolean {
+    return this.anthropicApiKey.length > 0
   },
   /** True when a Gemini key is configured (takes precedence over the proxy). */
   get usesGemini(): boolean {
@@ -39,6 +51,6 @@ export const config = {
   },
   /** True when any server/key backend is configured. */
   get hasBackend(): boolean {
-    return this.usesGemini || this.usesProxy
+    return this.usesAnthropic || this.usesGemini || this.usesProxy
   },
 }

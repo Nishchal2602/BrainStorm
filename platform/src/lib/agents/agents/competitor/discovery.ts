@@ -12,7 +12,7 @@ import type { LlmPort } from '../../llm'
 import { compactContext } from '../shared'
 
 const MAX_QUERIES = 8
-const MAX_USES = 8
+const MAX_USES = 5
 const MAX_TOKENS = 6500
 
 /** Raw, pre-normalization shapes parsed from the grounded facts template. */

@@ -38,6 +38,31 @@ interface GeminiResponse {
   }
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Rate-limit / overload backoff. Gemini free tier is bursty-sensitive (low RPM),
+// so a 429/503 gets retried with a wait rather than failing the call — the review
+// pipeline fires several calls back-to-back and must ride out a brief limit.
+const RETRY_STATUS = new Set([429, 503])
+const MAX_ATTEMPTS = 3
+const BACKOFF_MS = [2000, 6000, 15000] // fallback when the server sends no hint
+const MAX_BACKOFF_MS = 30_000
+
+/** How long to wait before retrying: prefer the server's own hint (Gemini's
+ * RetryInfo.retryDelay like "37s", or a Retry-After header), else exponential. */
+function retryWaitMs(attempt: number, body: unknown, res: Response): number {
+  const details = (body as { error?: { details?: Array<{ retryDelay?: string }> } })?.error?.details
+  if (Array.isArray(details)) {
+    for (const d of details) {
+      const m = typeof d?.retryDelay === 'string' ? d.retryDelay.match(/([\d.]+)s/) : null
+      if (m) return Math.min(Math.round(parseFloat(m[1]) * 1000), MAX_BACKOFF_MS)
+    }
+  }
+  const header = Number(res.headers.get('retry-after'))
+  if (Number.isFinite(header) && header > 0) return Math.min(header * 1000, MAX_BACKOFF_MS)
+  return BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]
+}
+
 /**
  * Google Gemini transport (MVP/validation). Implements the same ClaudeClient
  * seam so the rest of the app is unchanged: it maps GenerateParams onto Gemini's
@@ -61,34 +86,43 @@ export class GeminiClient implements ClaudeClient {
   }
 
   private async post(body: unknown): Promise<GeminiResponse> {
-    let res: Response
-    try {
-      res = await fetch(this.endpoint(), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-goog-api-key': this.apiKey,
-        },
-        body: JSON.stringify(body),
-      })
-    } catch {
-      throw new Error('Network error reaching the Gemini API. Check your connection.')
-    }
-    if (!res.ok) {
-      let detail = ''
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      let res: Response
       try {
-        const j = (await res.json()) as { error?: { message?: string; status?: string } }
-        detail = j.error?.message ?? ''
+        res = await fetch(this.endpoint(), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-goog-api-key': this.apiKey,
+          },
+          body: JSON.stringify(body),
+        })
+      } catch {
+        throw new Error('Network error reaching the Gemini API. Check your connection.')
+      }
+      if (res.ok) return (await res.json()) as GeminiResponse
+
+      let detail = ''
+      let parsed: unknown
+      try {
+        parsed = await res.json()
+        detail = (parsed as { error?: { message?: string } })?.error?.message ?? ''
       } catch {
         /* ignore */
       }
       if (res.status === 401 || res.status === 403)
         throw new ApiError(detail || 'Invalid Gemini API key.')
+      // Rate-limited / overloaded: wait it out (honoring the server's hint) and retry.
+      if (RETRY_STATUS.has(res.status) && attempt < MAX_ATTEMPTS - 1) {
+        await sleep(retryWaitMs(attempt, parsed, res))
+        continue
+      }
       if (res.status === 429)
         throw new ApiError(detail || 'Gemini rate limit reached. Try again shortly.')
       throw new ApiError(`Gemini API error (${res.status})${detail ? `: ${detail}` : ''}.`)
     }
-    return (await res.json()) as GeminiResponse
+    // Unreachable: the loop returns on success or throws on the final attempt.
+    throw new ApiError('Gemini rate limit reached. Try again shortly.')
   }
 
   /** Disable "thinking" on 2.5 Flash models so output tokens aren't starved

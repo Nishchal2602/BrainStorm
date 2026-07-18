@@ -42,6 +42,7 @@ export function isGeminiKey(key: string): boolean {
  * provider and then run against another. Precedence:
  * - a pasted BYOK key wins (honor what the user explicitly entered):
  *     Anthropic key (sk-ant-…) → DirectClaudeClient · anything else → GeminiClient
+ * - else build-time Anthropic key → DirectClaudeClient (owner-key, direct to Anthropic)
  * - else build-time Gemini key → GeminiClient
  * - else build-time proxy      → ProxyClaudeClient (owner-key mode)
  * - else                       → DirectClaudeClient (empty key; surfaces a clear auth error)
@@ -50,6 +51,9 @@ export function createClaudeClient(model: ModelId, apiKey?: string): ClaudeClien
   const key = apiKey?.trim()
   if (key) {
     return isGeminiKey(key) ? new GeminiClient(key) : new DirectClaudeClient(key, model)
+  }
+  if (config.usesAnthropic) {
+    return new DirectClaudeClient(config.anthropicApiKey, config.anthropicModel as ModelId)
   }
   if (config.usesGemini) {
     return new GeminiClient()

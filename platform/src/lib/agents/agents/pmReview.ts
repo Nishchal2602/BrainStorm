@@ -74,7 +74,7 @@ export class PmReviewAgent implements Agent {
     const { text, usage } = await this.llm.generateText({
       system: PM_REVIEW_SYSTEM,
       user,
-      maxTokens: 6000,
+      maxTokens: 5000,
       label: 'pm_review_agent',
       meta: meta.clientId ? { clientId: String(meta.clientId) } : undefined,
     })

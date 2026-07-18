@@ -6,6 +6,62 @@ export const ANTHROPIC_VERSION = '2023-06-01'
 const WEB_SEARCH_TOOL = 'web_search_20260209'
 const MAX_PAUSE_CONTINUATIONS = 4
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Retry policy. 429 (rate limit) honors the server's `retry-after`, else a
+// moderate backoff. 503/529 (overloaded) and transient network errors clear
+// quickly, so they retry fast. Waits are capped at MAX_BACKOFF_MS.
+const RETRY_STATUS = new Set([429, 503, 529])
+const MAX_ATTEMPTS = 3
+const RATE_LIMIT_BACKOFF_MS = [2000, 6000] // 429 with no retry-after hint
+const TRANSIENT_BACKOFF_MS = [250, 750] // 503/529/network — brief blips
+const MAX_BACKOFF_MS = 30_000
+
+/** How long to wait before retrying. 429 prefers the server's `retry-after`
+ * (seconds) then a moderate backoff; 503/529/network use a fast backoff.
+ * `status === 0` denotes a network/timeout error (no response). */
+function retryWaitMs(attempt: number, status: number, res?: Response): number {
+  if (status === 429) {
+    const header = res ? Number(res.headers.get('retry-after')) : NaN
+    if (Number.isFinite(header) && header > 0) return Math.min(header * 1000, MAX_BACKOFF_MS)
+    return RATE_LIMIT_BACKOFF_MS[Math.min(attempt, RATE_LIMIT_BACKOFF_MS.length - 1)]
+  }
+  return TRANSIENT_BACKOFF_MS[Math.min(attempt, TRANSIENT_BACKOFF_MS.length - 1)]
+}
+
+// Anthropic's structured output (output_config.format) requires additionalProperties:false
+// on every object and rejects the numeric/length/pattern keywords that Gemini's
+// responseSchema tolerates. The shared schemas are written Gemini-first (see the
+// analyzer/synthesis/customerVoice comments), so adapt them here at the transport
+// rather than forking the schema definitions.
+const UNSUPPORTED_SCHEMA_KEYS = new Set([
+  'minLength', 'maxLength', 'pattern',
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+  'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties',
+])
+
+/** Deep-copy a JSON Schema into the shape Anthropic's json_schema output accepts:
+ *  add `additionalProperties: false` to every object node, drop unsupported keywords. */
+function toAnthropicSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(toAnthropicSchema)
+  if (!node || typeof node !== 'object') return node
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    if (UNSUPPORTED_SCHEMA_KEYS.has(k)) continue
+    if (k === 'properties' && v && typeof v === 'object') {
+      out[k] = Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([pk, pv]) => [pk, toAnthropicSchema(pv)]),
+      )
+    } else if (['items', 'anyOf', 'allOf', 'oneOf', '$defs', 'definitions'].includes(k)) {
+      out[k] = toAnthropicSchema(v)
+    } else {
+      out[k] = v
+    }
+  }
+  if (out.type === 'object' || 'properties' in out) out.additionalProperties = false
+  return out
+}
+
 interface ContentBlock {
   type: string
   text?: string
@@ -58,17 +114,24 @@ export abstract class BaseClaudeClient implements ClaudeClient {
   }
 
   protected async post(body: unknown, extra: Record<string, string> = {}): Promise<MessagesResponse> {
-    let res: Response
-    try {
-      res = await fetch(this.endpoint(), {
-        method: 'POST',
-        headers: this.headers(extra),
-        body: JSON.stringify(body),
-      })
-    } catch {
-      throw new Error('Network error reaching the API. Check your connection.')
-    }
-    if (!res.ok) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      let res: Response
+      try {
+        res = await fetch(this.endpoint(), {
+          method: 'POST',
+          headers: this.headers(extra),
+          body: JSON.stringify(body),
+        })
+      } catch {
+        // Transient network/timeout blip — retry fast, then give up.
+        if (attempt < MAX_ATTEMPTS - 1) {
+          await sleep(retryWaitMs(attempt, 0))
+          continue
+        }
+        throw new Error('Network error reaching the API. Check your connection.')
+      }
+      if (res.ok) return (await res.json()) as MessagesResponse
+
       let detail = ''
       let code: string | undefined
       try {
@@ -79,10 +142,17 @@ export abstract class BaseClaudeClient implements ClaudeClient {
         /* ignore */
       }
       if (res.status === 401) throw new ApiError(detail || 'Unauthorized.', code)
+      // Rate-limited (429) / overloaded (503/529): wait it out (honoring the
+      // server's retry-after hint) and retry before giving up.
+      if (RETRY_STATUS.has(res.status) && attempt < MAX_ATTEMPTS - 1) {
+        await sleep(retryWaitMs(attempt, res.status, res))
+        continue
+      }
       if (res.status === 429) throw new ApiError(detail || 'Rate limited. Try again shortly.', code)
       throw new ApiError(`API error (${res.status})${detail ? `: ${detail}` : ''}.`, code)
     }
-    return (await res.json()) as MessagesResponse
+    // Unreachable: the loop returns on success or throws on the final attempt.
+    throw new ApiError('Rate limited. Try again shortly.')
   }
 
   async validate(): Promise<void> {
@@ -110,26 +180,39 @@ export abstract class BaseClaudeClient implements ClaudeClient {
         : params.system,
     }
     if (params.jsonSchema) {
-      base.output_config = { format: { type: 'json_schema', schema: params.jsonSchema } }
+      base.output_config = { format: { type: 'json_schema', schema: toAnthropicSchema(params.jsonSchema) } }
     }
     if (params.webSearch) {
       // Server-side web search (GA tool version 2026-02-09): type + name, with an
-      // optional max_uses cap. No beta header required.
+      // optional max_uses cap. `allowed_callers: ['direct']` keeps it a plain
+      // direct-call tool — the default dynamic-filtering path runs via programmatic
+      // tool calling (code execution), which smaller models (e.g. Haiku 4.5) reject
+      // with a 400. No beta header required.
       base.tools = [
-        { type: WEB_SEARCH_TOOL, name: 'web_search', max_uses: params.webSearch.maxUses },
+        {
+          type: WEB_SEARCH_TOOL,
+          name: 'web_search',
+          max_uses: params.webSearch.maxUses,
+          allowed_callers: ['direct'],
+        },
       ]
     }
 
-    // Page content is its own block (cached for re-use by pause_turn
-    // continuations); the variable task text trails it, uncached.
-    const pageBlock: Record<string, unknown> = { type: 'text', text: params.pageText }
-    if (cache) pageBlock.cache_control = ephemeral
+    // Build the user turn from the non-empty parts only — Anthropic rejects empty
+    // text blocks, and the adapter passes taskText: '' for every call. The context
+    // block leads the turn (frames the document); the page block trails it and
+    // carries the cache breakpoint (re-used by pause_turn continuations) when
+    // caching is on. Leaving the context block uncached before the cached page
+    // block reduces cache reuse on this Anthropic path — acceptable.
     const firstUserContent: Array<Record<string, unknown>> = []
-    // The per-call context block leads the turn (frames the document). It is
-    // left uncached and precedes the cached page block, which reduces cache
-    // reuse on this (fallback) Anthropic path — acceptable; Gemini is active.
     if (params.contextBlock) firstUserContent.push({ type: 'text', text: params.contextBlock })
-    firstUserContent.push(pageBlock, { type: 'text', text: params.taskText })
+    if (params.pageText) {
+      const pageBlock: Record<string, unknown> = { type: 'text', text: params.pageText }
+      if (cache) pageBlock.cache_control = ephemeral
+      firstUserContent.push(pageBlock)
+    }
+    if (params.taskText) firstUserContent.push({ type: 'text', text: params.taskText })
+    if (firstUserContent.length === 0) firstUserContent.push({ type: 'text', text: '(no content)' })
     const messages: Array<{ role: string; content: unknown }> = [
       { role: 'user', content: firstUserContent },
     ]

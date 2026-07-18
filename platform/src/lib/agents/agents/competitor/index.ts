@@ -282,8 +282,12 @@ export class CompetitorIntelligenceAgent implements Agent {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      this.logger.error('competitor: failed', msg)
-      return { agentId: this.id, summary: `Competitor Intelligence failed: ${msg}`, findings: [], confidence: 0, data: EMPTY, status: 'error', error: msg, durationMs: dur() }
+      // Missing competitor research is "no evidence," not an execution failure —
+      // degrade gracefully (like Customer Voice) so the stage completes and
+      // Synthesis stays stable. Web-search unavailability on smaller models is the
+      // common trigger.
+      this.logger.warn('competitor: unavailable, returning empty landscape', msg)
+      return { agentId: this.id, summary: `Competitor research unavailable — ${msg}`, findings: [], confidence: 0, data: EMPTY, status: 'ok', durationMs: dur() }
     }
   }
 }

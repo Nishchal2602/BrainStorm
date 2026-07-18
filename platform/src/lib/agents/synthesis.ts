@@ -152,7 +152,7 @@ export class Synthesizer {
       system: SYNTHESIS_SYSTEM,
       user,
       schema: SCHEMA as object,
-      maxTokens: 4000,
+      maxTokens: 5000,
       label: 'synthesis',
       meta: ctx.metadata?.clientId ? { clientId: String(ctx.metadata.clientId) } : undefined,
     })

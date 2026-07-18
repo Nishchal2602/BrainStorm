@@ -16,6 +16,9 @@ import { buildUnits, selectTopUnitsForValidation } from './verify'
 const MIN_REDDIT_POSTS = 3
 const MAX_QUERIES = 15
 const MAX_VALIDATION_UNITS = 24
+// Grounded web-search evidence is a weaker signal than real Reddit discussion —
+// scale its overall confidence by this factor (Reddit-sourced evidence keeps ×1.0).
+const GROUNDED_CONFIDENCE_MULTIPLIER = 0.7
 
 const EMPTY: CustomerVoicePayload = {
   hypotheses: [],
@@ -94,7 +97,13 @@ export class CustomerVoiceAgent implements Agent {
       let docs = await searchReddit(queries, relevanceTerms, this.logger)
       let usedFallback = false
       let fbUsage: TokenUsage | undefined
-      if (docs.length < MIN_REDDIT_POSTS) {
+      // The grounded fallback is an extra grounded LLM call that substitutes for
+      // Reddit when it returns too little. Callers on a server (where Reddit IPs
+      // are throttled so this would fire almost every run) can opt out via
+      // metadata to save a grounding call / rate-limit budget; browser callers
+      // leave it on. Absent the flag, behavior is unchanged.
+      const skipFallback = ctx.metadata?.skipGroundedFallback === true
+      if (docs.length < MIN_REDDIT_POSTS && !skipFallback) {
         usedFallback = true
         const fb = await groundedFallback(this.llm, queries, meta)
         docs = fb.docs
@@ -120,10 +129,25 @@ export class CustomerVoiceAgent implements Agent {
       const score = scoreHypotheses(hypotheses, judgments, units, docs.length)
       const built = buildCustomerVoice(score)
 
+      // Grounded web-search evidence is a weaker signal than real Reddit discussion —
+      // scale confidence down and label the source so it isn't read as community
+      // discussion. Reddit-sourced evidence keeps full weight (×1.0).
+      if (usedFallback) {
+        const downgrade = (
+          l: CustomerVoicePayload['overallConfidenceLabel'],
+        ): CustomerVoicePayload['overallConfidenceLabel'] =>
+          l === 'High' ? 'Medium' : l === 'Medium' ? 'Low' : l
+        built.confidence = built.confidence * GROUNDED_CONFIDENCE_MULTIPLIER
+        built.payload.overallConfidence = Math.round(
+          built.payload.overallConfidence * GROUNDED_CONFIDENCE_MULTIPLIER,
+        )
+        built.payload.overallConfidenceLabel = downgrade(built.payload.overallConfidenceLabel)
+      }
+
       this.logger.info('customer_voice: scored', {
         hypotheses: score.hypothesesEvaluated,
-        evidenceLevel: score.evidenceLevel,
-        confidence: score.overallConfidence,
+        evidenceLevel: built.payload.evidenceLevel,
+        confidence: built.payload.overallConfidence,
         verdicts: { supported: score.supportedCount, mixed: score.mixedCount, contradicted: score.contradictedCount, insufficient: score.insufficientCount },
         units: units.length,
         kept: score.hypotheses.reduce((n, h) => n + h.supportingCount + h.contradictingCount, 0),
@@ -132,8 +156,9 @@ export class CustomerVoiceAgent implements Agent {
       })
 
       const n = score.hypothesesEvaluated
+      const sourceWord = usedFallback ? 'web-search result' : 'discussion'
       const summary =
-        `Evaluated ${n} hypothes${n === 1 ? 'is' : 'es'} against ${score.discussionCount} discussion${score.discussionCount === 1 ? '' : 's'}: ${score.evidenceLevel} (overall confidence ${score.overallConfidence}/100). ` +
+        `Evaluated ${n} hypothes${n === 1 ? 'is' : 'es'} against ${score.discussionCount} ${sourceWord}${score.discussionCount === 1 ? '' : 's'}: ${built.payload.evidenceLevel} (overall confidence ${built.payload.overallConfidence}/100). ` +
         'Absence of public evidence is not evidence of absent demand.'
 
       return {

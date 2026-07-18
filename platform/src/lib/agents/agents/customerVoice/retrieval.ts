@@ -21,7 +21,7 @@ export interface RetrievalService {
   ): Promise<RetrievalResult>
 }
 
-const DEFAULT_MAX_USES = 6
+const DEFAULT_MAX_USES = 4
 
 const SYSTEM = `You research what real users say about a product problem by searching the public web — prioritize Reddit, then public forums and community threads. Use ONLY real results from your web search; never invent discussions, quotes, or URLs.
 
