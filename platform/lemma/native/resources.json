@@ -1,0 +1,244 @@
+{
+  "_comment": "Native Lemma pod resources for the Pocket PM review. Applied by apply.mjs (or paste into the Lemma UI/CLI). Shapes match https://api.lemma.work/openapi.json: CreateTableRequest, CreateAgentRequest, WorkflowGraphUpdateRequest. Agents run on the pod's DEFAULT model (agent_runtime omitted). Each agent writes its own row(s) to its table via the POD toolset; review_run_id ties every row to one review.",
+
+  "tables": [
+    {
+      "name": "pm_reviews",
+      "primary_key_column": "id",
+      "columns": [
+        { "name": "id", "type": "UUID", "auto": true },
+        { "name": "review_run_id", "type": "TEXT", "required": true },
+        { "name": "decision", "type": "TEXT" },
+        { "name": "readiness", "type": "INTEGER" },
+        { "name": "confidence", "type": "TEXT" },
+        { "name": "summary", "type": "TEXT" },
+        { "name": "risks", "type": "JSON" },
+        { "name": "missing_requirements", "type": "JSON" },
+        { "name": "open_questions", "type": "JSON" }
+      ]
+    },
+    {
+      "name": "customer_evidence",
+      "primary_key_column": "id",
+      "columns": [
+        { "name": "id", "type": "UUID", "auto": true },
+        { "name": "review_run_id", "type": "TEXT", "required": true },
+        { "name": "claim", "type": "TEXT" },
+        { "name": "verdict", "type": "TEXT" },
+        { "name": "confidence", "type": "FLOAT" },
+        { "name": "quotes", "type": "JSON" },
+        { "name": "sources", "type": "JSON" },
+        { "name": "source_type", "type": "TEXT" }
+      ]
+    },
+    {
+      "name": "competitors",
+      "primary_key_column": "id",
+      "columns": [
+        { "name": "id", "type": "UUID", "auto": true },
+        { "name": "review_run_id", "type": "TEXT", "required": true },
+        { "name": "name", "type": "TEXT" },
+        { "name": "category", "type": "TEXT" },
+        { "name": "positioning", "type": "TEXT" },
+        { "name": "capabilities", "type": "JSON" },
+        { "name": "differentiation_score", "type": "FLOAT" },
+        { "name": "threat_level", "type": "TEXT" }
+      ]
+    },
+    {
+      "name": "findings",
+      "primary_key_column": "id",
+      "columns": [
+        { "name": "id", "type": "UUID", "auto": true },
+        { "name": "review_run_id", "type": "TEXT", "required": true },
+        { "name": "agent", "type": "TEXT" },
+        { "name": "type", "type": "TEXT" },
+        { "name": "severity", "type": "TEXT" },
+        { "name": "title", "type": "TEXT" },
+        { "name": "description", "type": "TEXT" },
+        { "name": "confidence", "type": "FLOAT" }
+      ]
+    },
+    {
+      "name": "recommendations",
+      "primary_key_column": "id",
+      "columns": [
+        { "name": "id", "type": "UUID", "auto": true },
+        { "name": "review_run_id", "type": "TEXT", "required": true },
+        { "name": "decision", "type": "TEXT" },
+        { "name": "confidence", "type": "FLOAT" },
+        { "name": "rationale", "type": "TEXT" },
+        { "name": "executive_summary", "type": "TEXT" }
+      ]
+    }
+  ],
+
+  "agents": [
+    {
+      "name": "pocket-pm-analyze",
+      "description": "Classifies the PRD and extracts the real underlying problem + search plan.",
+      "toolsets": ["POD"],
+      "agent_runtime": { "profile_id": "system:lemma", "model_name": "deepseek-v4-pro" },
+      "instruction": "You analyze a PRD/product document in ONE pass. Input: { review_run_id, prd_text, product_name, feature_name }. Base everything on prd_text; never invent specifics.\n\nProduce:\n- industry, product_category, feature_category (short labels; 'Unknown' if unclear)\n- core_problem: the concrete underlying user problem in plain language (look past the doc's wording)\n- persona: the primary affected user\n- solution_category: the kind of solution proposed\n- key_capabilities: 4-8 concrete capabilities the solution depends on\n- goals, key_requirements, constraints: up to 5 each, only if the document states them\n- search_queries: 4-6 customer-vernacular queries a frustrated user would type about this problem (for the customer-voice agent)\n- confidence (0..1) and rationale (one sentence)\n\nReturn the JSON matching output_schema. This shared analysis frames every later stage — it is not written to a table.",
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "industry": { "type": "string" },
+          "product_category": { "type": "string" },
+          "feature_category": { "type": "string" },
+          "core_problem": { "type": "string" },
+          "persona": { "type": "string" },
+          "solution_category": { "type": "string" },
+          "key_capabilities": { "type": "array", "items": { "type": "string" } },
+          "goals": { "type": "array", "items": { "type": "string" } },
+          "key_requirements": { "type": "array", "items": { "type": "string" } },
+          "constraints": { "type": "array", "items": { "type": "string" } },
+          "search_queries": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number" },
+          "rationale": { "type": "string" }
+        },
+        "required": ["industry", "core_problem", "persona", "solution_category", "key_capabilities", "search_queries", "confidence"]
+      }
+    },
+    {
+      "name": "pocket-pm-review",
+      "description": "Staff-PM implementation-readiness review of the PRD.",
+      "toolsets": ["POD"],
+      "agent_runtime": { "profile_id": "system:lemma", "model_name": "deepseek-v4-pro" },
+      "permissions": { "grants": [
+        { "resource_type": "datastore_table", "resource_name": "pm_reviews", "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] },
+        { "resource_type": "datastore_table", "resource_name": "findings", "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] }
+      ] },
+      "instruction": "You are a Staff Product Manager reviewing a PRD before engineering implementation. Input: { review_run_id, prd_text, product_name, feature_name }.\n\nDo NOT judge whether the idea is good (assume customer/competitor/market work happened elsewhere). Judge only whether the PRD is complete, unambiguous, implementable, and ready to build, from the perspective of an engineering team that must build exactly what is written. Never ask engineering to make a product decision — an unspecified behaviour is a MISSING REQUIREMENT (product owns behaviour; engineering owns implementation).\n\nAssess: problem definition, functional requirements, user flows, edge cases, acceptance criteria, non-functional requirements, dependencies, implementation risks, prioritization. Then give an overall 0-100 readiness score and a decision.\n\nReport the most important issues only: at most 5 critical, 4 medium, 3 minor, highest-impact first; one-two sentences each. Prefix inferred (not stated) conclusions with 'Assumption:'.\n\nProduce fields per output_schema: decision ('Ready to Build' | 'Build with Changes' | 'Needs Major Revision'), readiness (0-100), confidence ('High'|'Medium'|'Low' — your certainty, independent of the score), summary, risks (critical+medium issue titles), missing_requirements, open_questions.\n\nTHEN persist your results with the pod_write_record tool (action='create'). WRITE CONTRACT — send a COMPLETE data object on the FIRST call (never an empty object), and include ONLY the columns listed below. NEVER include id, user_id, created_at, or updated_at: those are system-managed and any value for them makes the write fail.\n1) Write exactly ONE row to table `pm_reviews` with data = { review_run_id (from input), decision, readiness, confidence, summary, risks (array of strings), missing_requirements (array of strings), open_questions (array of strings) }.\n2) Write ONE row to table `findings` for EACH critical and medium issue, data = { review_run_id, agent: 'pm_review', type: 'risk', severity: 'critical'|'medium', title, description, confidence: 0.8 }.\nMake each write in a single call with the full payload; do not retry a row that already succeeded. Finally return the JSON per output_schema.",
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "decision": { "type": "string" },
+          "readiness": { "type": "integer" },
+          "confidence": { "type": "string" },
+          "summary": { "type": "string" },
+          "risks": { "type": "array", "items": { "type": "string" } },
+          "missing_requirements": { "type": "array", "items": { "type": "string" } },
+          "open_questions": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["decision", "readiness", "summary"]
+      }
+    },
+    {
+      "name": "pocket-pm-customer-voice",
+      "description": "Validates the product's assumptions against real public discussion via web search.",
+      "toolsets": ["POD", "WEB_SEARCH"],
+      "agent_runtime": { "profile_id": "system:lemma", "model_name": "deepseek-v4-pro" },
+      "permissions": { "grants": [
+        { "resource_type": "datastore_table", "resource_name": "customer_evidence", "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] },
+        { "resource_type": "datastore_table", "resource_name": "findings", "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] }
+      ] },
+      "instruction": "You validate a product's assumptions against real public evidence. Input: { review_run_id, prd_text, product_name, feature_name }.\n\nSTEP 1 — From the document, extract 3-6 DISTINCT falsifiable claims (assumptions about what users actually experience, want, or do), each phrased so real discussion could clearly support or contradict it.\nSTEP 2 — Use WEB SEARCH to find real user discussion (forums, Reddit, reviews, articles) about each claim. For each claim decide a verdict: 'supported' | 'mixed' | 'contradicted' | 'insufficient_evidence'. Copy 1-3 VERBATIM quotes and their source URLs as evidence. Never treat absence of evidence as contradiction — use 'insufficient_evidence'. Because this is web-search evidence (not first-hand community data), keep confidence modest (<= 0.7).\n\nPersist with the pod_write_record tool (action='create'). WRITE CONTRACT — send a COMPLETE data object on the FIRST call (never empty), include ONLY the columns listed, and NEVER include id, user_id, created_at, or updated_at (system-managed; any value makes the write fail).\nFor EACH claim, write ONE row to table `customer_evidence` with data = { review_run_id, claim, verdict, confidence (0..1), quotes (array of strings), sources (array of URLs), source_type: 'web-search' }. Also write ONE row to table `findings` per claim with data = { review_run_id, agent: 'customer_voice', type: 'insight', severity: 'low'|'medium', title: claim, description: verdict summary, confidence }.\nMake each write in a single call with the full payload; do not retry a row that already succeeded. Return a short JSON summary per output_schema.",
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "claims_evaluated": { "type": "integer" },
+          "overall_confidence": { "type": "number" },
+          "summary": { "type": "string" }
+        },
+        "required": ["claims_evaluated", "summary"]
+      }
+    },
+    {
+      "name": "pocket-pm-competitor",
+      "description": "Maps the competitive landscape via web search.",
+      "toolsets": ["POD", "WEB_SEARCH"],
+      "agent_runtime": { "profile_id": "system:lemma", "model_name": "deepseek-v4-pro" },
+      "permissions": { "grants": [
+        { "resource_type": "datastore_table", "resource_name": "competitors", "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] },
+        { "resource_type": "datastore_table", "resource_name": "findings", "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] }
+      ] },
+      "instruction": "You map the competitive landscape for a proposed product. Input: { review_run_id, prd_text, product_name, feature_name }.\n\nUse WEB SEARCH to find real competing/adjacent products for the problem and solution category in the document. For each competitor, capture: name, category, positioning (one line), key capabilities (list), a differentiation_score 0-1 (how differentiated the PROPOSED product is vs this competitor — higher = more differentiated), and threat_level ('low'|'medium'|'high'). Frame absence as search coverage, never as 'no competition exists'.\n\nPersist with the pod_write_record tool (action='create'). WRITE CONTRACT — send a COMPLETE data object on the FIRST call (never empty), include ONLY the columns listed, and NEVER include id, user_id, created_at, or updated_at (system-managed; any value makes the write fail).\nFor EACH competitor, write ONE row to table `competitors` with data = { review_run_id, name, category, positioning, capabilities (array of strings), differentiation_score (0..1), threat_level: 'low'|'medium'|'high' }. Also write ONE row to table `findings` summarizing the landscape with data = { review_run_id, agent: 'competitor', type: 'insight', severity: 'medium', title, description, confidence }.\nMake each write in a single call with the full payload; do not retry a row that already succeeded. Return a short JSON summary per output_schema.",
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "competitors_found": { "type": "integer" },
+          "summary": { "type": "string" }
+        },
+        "required": ["competitors_found", "summary"]
+      }
+    },
+    {
+      "name": "pocket-pm-synthesis",
+      "description": "Synthesizes all prior stages into a build recommendation.",
+      "toolsets": ["POD"],
+      "agent_runtime": { "profile_id": "system:lemma", "model_name": "deepseek-v4-pro" },
+      "permissions": { "grants": [
+        { "resource_type": "datastore_table", "resource_name": "recommendations", "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] },
+        { "resource_type": "datastore_table", "resource_name": "pm_reviews", "permission_ids": ["datastore.table.read", "datastore.record.read"] },
+        { "resource_type": "datastore_table", "resource_name": "customer_evidence", "permission_ids": ["datastore.table.read", "datastore.record.read"] },
+        { "resource_type": "datastore_table", "resource_name": "competitors", "permission_ids": ["datastore.table.read", "datastore.record.read"] },
+        { "resource_type": "datastore_table", "resource_name": "findings", "permission_ids": ["datastore.table.read", "datastore.record.read"] }
+      ] },
+      "instruction": "You are the recommendation engine. Input: { review_run_id }.\n\nUsing the pod_get_records tool, READ the rows for this review_run_id from: `pm_reviews`, `customer_evidence`, `competitors`, and `findings`. Weigh execution readiness (pm_reviews), demand/evidence (customer_evidence, at its stated confidence — treat web-search evidence as weaker signal), and competitive differentiation (competitors).\n\nProduce a single decision: 'build' | 'build_with_changes' | 'validate_first' | 'do_not_build', a confidence 0..1, a 2-4 sentence rationale, and a concise executive_summary of the whole review.\n\nTHEN persist with the pod_write_record tool (action='create'). WRITE CONTRACT — send a COMPLETE data object on the FIRST call (never empty), include ONLY the columns listed, and NEVER include id, user_id, created_at, or updated_at (system-managed; any value makes the write fail). Write exactly ONE row to table `recommendations` with data = { review_run_id, decision, confidence (0..1), rationale, executive_summary }. Return the same as JSON per output_schema.",
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "decision": { "type": "string", "enum": ["build", "build_with_changes", "validate_first", "do_not_build"] },
+          "confidence": { "type": "number" },
+          "rationale": { "type": "string" },
+          "executive_summary": { "type": "string" }
+        },
+        "required": ["decision", "confidence", "rationale", "executive_summary"]
+      }
+    }
+  ],
+
+  "workflow": {
+    "name": "pocket-pm-review-native",
+    "description": "Native Pocket PM review — five Lemma agents run on the pod's default model, orchestrated in sequence, each writing its results to Lemma tables (analyze frames the run; pm_review/customer_voice/competitor/synthesis persist rows keyed by review_run_id).",
+    "start": { "type": "MANUAL" },
+    "graph": {
+      "start": { "type": "MANUAL" },
+      "nodes": [
+        { "id": "intake", "type": "FORM", "label": "PRD Intake", "config": { "input_schema": { "type": "object", "properties": { "review_run_id": { "type": "string" }, "prd_text": { "type": "string" }, "product_name": { "type": "string" }, "feature_name": { "type": "string" } }, "required": ["review_run_id", "prd_text"] } } },
+        { "id": "analyze", "type": "AGENT", "label": "Shared Analysis", "config": { "agent_name": "pocket-pm-analyze", "input_mapping": {
+          "review_run_id": { "type": "expression", "value": "intake.review_run_id" },
+          "prd_text": { "type": "expression", "value": "intake.prd_text" },
+          "product_name": { "type": "expression", "value": "intake.product_name" },
+          "feature_name": { "type": "expression", "value": "intake.feature_name" }
+        } } },
+        { "id": "pm_review", "type": "AGENT", "label": "PM Review", "config": { "agent_name": "pocket-pm-review", "input_mapping": {
+          "review_run_id": { "type": "expression", "value": "intake.review_run_id" },
+          "prd_text": { "type": "expression", "value": "intake.prd_text" },
+          "product_name": { "type": "expression", "value": "intake.product_name" },
+          "feature_name": { "type": "expression", "value": "intake.feature_name" }
+        } } },
+        { "id": "customer_voice", "type": "AGENT", "label": "Customer Voice", "config": { "agent_name": "pocket-pm-customer-voice", "input_mapping": {
+          "review_run_id": { "type": "expression", "value": "intake.review_run_id" },
+          "prd_text": { "type": "expression", "value": "intake.prd_text" },
+          "product_name": { "type": "expression", "value": "intake.product_name" },
+          "feature_name": { "type": "expression", "value": "intake.feature_name" }
+        } } },
+        { "id": "competitor", "type": "AGENT", "label": "Competitor Intelligence", "config": { "agent_name": "pocket-pm-competitor", "input_mapping": {
+          "review_run_id": { "type": "expression", "value": "intake.review_run_id" },
+          "prd_text": { "type": "expression", "value": "intake.prd_text" },
+          "product_name": { "type": "expression", "value": "intake.product_name" },
+          "feature_name": { "type": "expression", "value": "intake.feature_name" }
+        } } },
+        { "id": "synthesis", "type": "AGENT", "label": "Recommendation", "config": { "agent_name": "pocket-pm-synthesis", "input_mapping": {
+          "review_run_id": { "type": "expression", "value": "intake.review_run_id" }
+        } } },
+        { "id": "end", "type": "END", "label": "Done", "config": {} }
+      ],
+      "edges": [
+        { "id": "e0", "source": "intake", "target": "analyze" },
+        { "id": "e1", "source": "analyze", "target": "pm_review" },
+        { "id": "e2", "source": "pm_review", "target": "customer_voice" },
+        { "id": "e3", "source": "customer_voice", "target": "competitor" },
+        { "id": "e4", "source": "competitor", "target": "synthesis" },
+        { "id": "e5", "source": "synthesis", "target": "end" }
+      ]
+    }
+  }
+}
