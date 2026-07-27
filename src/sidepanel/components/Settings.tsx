@@ -3,6 +3,8 @@ import type { ModelSetting, Settings as SettingsType, UserContext } from '@/lib/
 import { setSettings } from '@/lib/storage/settings'
 import { clearHistory } from '@/lib/storage/history'
 import { getUserContext, setUserContext } from '@/lib/storage/profile'
+import { clearNotionAuth, getNotionAuth } from '@/lib/storage/notionAuth'
+import { connectNotion } from '@/lib/notion/oauth'
 import { sendMessage } from '@/lib/messaging/types'
 import { config } from '@/lib/config'
 import { isGeminiKey } from '@/lib/claude/client'
@@ -30,11 +32,42 @@ export function Settings({
   const [profile, setProfile] = useState<UserContext | null>(null)
   const profileTouched = useRef(false)
 
+  // Notion connection (Apply-to-Notion via the official API).
+  const [notionWorkspace, setNotionWorkspace] = useState<string | null>(null)
+  const [notionConnected, setNotionConnected] = useState(false)
+  const [notionBusy, setNotionBusy] = useState(false)
+  const [notionErr, setNotionErr] = useState<string | null>(null)
+
   useEffect(() => {
     getUserContext().then((v) => {
       if (!profileTouched.current) setProfile(v)
     })
+    getNotionAuth().then((a) => {
+      setNotionConnected(!!a)
+      setNotionWorkspace(a?.workspaceName ?? null)
+    })
   }, [])
+
+  const connect = async () => {
+    setNotionBusy(true)
+    setNotionErr(null)
+    try {
+      const { workspaceName } = await connectNotion()
+      setNotionConnected(true)
+      setNotionWorkspace(workspaceName ?? null)
+    } catch (e) {
+      setNotionErr(e instanceof Error ? e.message : 'Could not connect to Notion.')
+    } finally {
+      setNotionBusy(false)
+    }
+  }
+
+  const disconnect = async () => {
+    await clearNotionAuth()
+    setNotionConnected(false)
+    setNotionWorkspace(null)
+    setNotionErr(null)
+  }
 
   const updateProfile = (patch: Partial<UserContext>) => {
     profileTouched.current = true
@@ -163,6 +196,40 @@ export function Settings({
           Clear history
         </button>
       </div>
+
+      {config.notionOAuthConfigured && (
+        <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-900">Notion</h3>
+          {notionConnected ? (
+            <>
+              <p className="mt-0.5 text-[12px] text-slate-500">
+                Connected{notionWorkspace ? ` to ${notionWorkspace}` : ''} — Apply inserts AI Drafts
+                into your Notion pages.
+              </p>
+              <button
+                onClick={disconnect}
+                className="mt-2 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="mt-0.5 text-[12px] text-slate-500">
+                Connect Notion to apply a review's AI Drafts straight into the page.
+              </p>
+              <button
+                onClick={connect}
+                disabled={notionBusy}
+                className="mt-2 rounded-md bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {notionBusy ? 'Connecting…' : 'Connect Notion'}
+              </button>
+            </>
+          )}
+          {notionErr && <p className="mt-1.5 text-[12px] text-rose-600">{notionErr}</p>}
+        </div>
+      )}
 
       <details className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         <summary className="cursor-pointer text-sm font-semibold text-slate-900">

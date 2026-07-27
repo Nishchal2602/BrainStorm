@@ -66,3 +66,30 @@ curl -i https://pm-copilot-proxy.<subdomain>.workers.dev \
   -d '{"model":"claude-haiku-4-5","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}'
 # 200 + a Claude response. Wrong/absent secret → 401. Over the daily cap → 429.
 ```
+
+## Apply-to-Notion (OAuth) — optional
+
+The same Worker exposes `POST /notion/token`, which exchanges a Notion OAuth code for an access token server-side (so the client secret never ships in the extension). Only needed if you want the extension's **Apply** button to insert AI Drafts into Notion.
+
+1. **Create a public Notion integration** at <https://www.notion.so/my-integrations> → type **Public**, capabilities **Insert content** (and Read content). Set the **Redirect URI** to the extension's OAuth redirect — run this in the extension's service-worker console to get it: `chrome.identity.getRedirectURL('notion')` → `https://<extension-id>.chromiumapp.org/notion`. Copy the integration's **OAuth client ID** and **client secret**.
+2. **Configure the Worker:**
+   ```bash
+   # wrangler.toml: NOTION_CLIENT_ID = "<client id>"
+   wrangler secret put NOTION_CLIENT_SECRET   # <client secret>
+   wrangler deploy
+   ```
+3. **Build the extension** with (repo `.env`):
+   ```bash
+   VITE_NOTION_CLIENT_ID=<client id>
+   VITE_NOTION_OAUTH_URL=https://pm-copilot-proxy.<subdomain>.workers.dev/notion/token
+   ```
+   Then Settings → **Connect Notion**, authorize + pick the page(s), and Apply works on those pages.
+
+Smoke test (a bad code returns a clean JSON error; the secret is never echoed):
+
+```bash
+curl -i https://pm-copilot-proxy.<subdomain>.workers.dev/notion/token \
+  -H 'content-type: application/json' \
+  -d '{"code":"bad","redirectUri":"https://x.chromiumapp.org/notion"}'
+# 4xx + {"error":"..."}. The root path still forwards Anthropic as before.
+```

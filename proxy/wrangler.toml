@@ -10,13 +10,17 @@ PER_IP_DAILY_CAP = "10"
 QUICK_CAP = "3"
 STANDARD_CAP = "2"
 DEEP_CAP = "1"
+# Notion OAuth — public client id (safe here). The SECRET is set via wrangler secret
+# (below), NOT in this file. Only needed if you enable Apply-to-Notion.
+NOTION_CLIENT_ID = "3a6d872b-594c-815a-8227-00377e9625ac"
 
 # Rate-limit counters. Create the namespace and paste its id:
 #   wrangler kv namespace create RL
 [[kv_namespaces]]
 binding = "RL"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "a562c6ce597146138e9405a2ac8d0a4e"
 
 # Secrets are NOT stored here. Set them with:
 #   wrangler secret put ANTHROPIC_API_KEY
 #   wrangler secret put PROXY_SHARED_SECRET
+#   wrangler secret put NOTION_CLIENT_SECRET   # only for Apply-to-Notion (OAuth)

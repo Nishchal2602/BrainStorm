@@ -23,7 +23,13 @@ export default defineManifest({
   side_panel: {
     default_path: 'index.html',
   },
-  permissions: ['activeTab', 'scripting', 'storage', 'sidePanel'],
+  // 'identity' powers the Notion OAuth connect flow (chrome.identity.launchWebAuthFlow).
+  // NOTE: launchWebAuthFlow's redirect URL is chrome.identity.getRedirectURL() —
+  // https://<extension-id>.chromiumapp.org/notion. The extension id (and thus that
+  // URL) is stable for a published build; for unpacked dev it changes per install
+  // unless a "key" is pinned here — register the current getRedirectURL() output in
+  // the Notion integration, or pin "key" for a constant id.
+  permissions: ['activeTab', 'scripting', 'storage', 'sidePanel', 'identity'],
   // Broad host access is required because the extension injects its page reader
   // (chrome.scripting.executeScript) into whatever tab you're viewing. activeTab
   // alone is unreliable with a side panel (openPanelOnActionClick doesn't reliably

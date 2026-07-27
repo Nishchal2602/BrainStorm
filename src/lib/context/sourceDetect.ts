@@ -12,7 +12,8 @@ export function detectSource(url: string): DetectedSource {
     return 'generic'
   }
 
-  if (host.endsWith('notion.so') || host.endsWith('notion.site')) return 'notion'
+  if (host.endsWith('notion.so') || host.endsWith('notion.site') || host.endsWith('notion.com'))
+    return 'notion'
   if (host === 'linear.app' || host.endsWith('.linear.app')) return 'linear'
   if (host === 'docs.google.com') return 'gdocs'
 

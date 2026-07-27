@@ -18,10 +18,21 @@
  *
  * The extension sends X-Client-Id (per-install id) and X-PM-Depth (quick|standard|deep);
  * per-user caps are total (no reset). The global daily cap is the spend backstop.
+ *
+ * Routes:
+ *   POST /               → forward to Anthropic (owner-key mode; guarded by secret + caps)
+ *   POST /notion/token   → Notion OAuth code→token exchange (holds NOTION_CLIENT_SECRET;
+ *                          this is the OAuth handshake, so it is exempt from the secret/RL guards)
+ *
+ * Extra Notion secrets/vars:
+ *   NOTION_CLIENT_ID     (var)     — public OAuth client id
+ *   NOTION_CLIENT_SECRET (secret)  — OAuth client secret, never exposed to clients
  */
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
+const NOTION_TOKEN_URL = 'https://api.notion.com/v1/oauth/token'
+const NOTION_VERSION = '2022-06-28'
 
 function cors(extra = {}) {
   return {
@@ -55,6 +66,51 @@ async function bump(kv, key, ttlSeconds) {
   return next
 }
 
+/**
+ * Notion OAuth code→token exchange. Runs the Basic-auth handshake server-side so
+ * the client_secret never ships in the extension. Returns only the token +
+ * workspace identifiers. Exempt from the Anthropic secret/RL guards.
+ */
+async function handleNotionToken(request, env) {
+  if (!env.NOTION_CLIENT_ID || !env.NOTION_CLIENT_SECRET) {
+    return json(503, { error: 'Notion OAuth is not configured on the server.' })
+  }
+  let body
+  try {
+    body = await request.json()
+  } catch {
+    return json(400, { error: 'Invalid request body' })
+  }
+  const { code, redirectUri } = body || {}
+  if (!code || !redirectUri) {
+    return json(400, { error: 'Missing code or redirectUri' })
+  }
+  const basic = btoa(`${env.NOTION_CLIENT_ID}:${env.NOTION_CLIENT_SECRET}`)
+  const upstream = await fetch(NOTION_TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      authorization: `Basic ${basic}`,
+      'content-type': 'application/json',
+      'notion-version': NOTION_VERSION,
+    },
+    body: JSON.stringify({ grant_type: 'authorization_code', code, redirect_uri: redirectUri }),
+  })
+  const data = await upstream.json().catch(() => ({}))
+  if (!upstream.ok || !data.access_token) {
+    return json(upstream.status || 502, {
+      error: data.error_description || data.error || 'Notion token exchange failed.',
+    })
+  }
+  // Return ONLY what the extension needs — never the client secret.
+  return json(200, {
+    access_token: data.access_token,
+    workspace_id: data.workspace_id,
+    workspace_name: data.workspace_name,
+    workspace_icon: data.workspace_icon,
+    bot_id: data.bot_id,
+  })
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -62,6 +118,13 @@ export default {
     }
     if (request.method !== 'POST') {
       return json(405, { error: { message: 'Method not allowed' } })
+    }
+
+    // Route by path. The Notion OAuth handshake is exempt from the Anthropic
+    // secret/rate-limit guards below (it carries no owner key + burns no LLM spend).
+    const pathname = new URL(request.url).pathname
+    if (pathname === '/notion/token') {
+      return handleNotionToken(request, env)
     }
 
     // 1. Auth: shared secret (deters casual abuse; the daily cap is the real guard).

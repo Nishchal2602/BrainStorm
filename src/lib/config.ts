@@ -10,6 +10,11 @@ const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)
 const geminiModel =
   (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || 'gemini-2.5-flash'
 const demoMode = (import.meta.env.VITE_DEMO_MODE as string | undefined)?.trim() === 'true'
+// Notion OAuth (Apply to Notion via the official API). The client id is public
+// (safe to embed); the client SECRET lives only in the Worker proxy, which the
+// extension hits at notionOauthUrl to exchange the auth code for a token.
+const notionClientId = (import.meta.env.VITE_NOTION_CLIENT_ID as string | undefined)?.trim() || ''
+const notionOauthUrl = (import.meta.env.VITE_NOTION_OAUTH_URL as string | undefined)?.trim() || ''
 
 export const config = {
   proxyUrl,
@@ -20,6 +25,14 @@ export const config = {
   geminiModel,
   /** Build-time demo flag — forces sample outputs (no API call). The user can also toggle demo in Settings. */
   demoMode,
+  /** Notion OAuth client id (public; used to build the authorize URL). */
+  notionClientId,
+  /** Worker endpoint that exchanges the Notion auth code for a token (holds the secret). */
+  notionOauthUrl,
+  /** True when both Notion OAuth values are configured — gates the Connect Notion UI. */
+  get notionOAuthConfigured(): boolean {
+    return this.notionClientId.length > 0 && this.notionOauthUrl.length > 0
+  },
   /** True when a Gemini key is configured at build time (takes precedence over the proxy). */
   get usesGemini(): boolean {
     return this.geminiApiKey.length > 0

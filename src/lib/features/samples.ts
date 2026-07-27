@@ -1,5 +1,6 @@
 import type { FeatureId, SourceRef } from '@/lib/types'
 import type { CompetitorPayload, CustomerVoicePayload } from '@/lib/agents/types'
+import type { SuggestedPatch } from './pmReview'
 
 /**
  * Canned model outputs for demo mode — no API call. Each sample is the RAW text
@@ -25,6 +26,19 @@ const PM_REVIEW = `<review>
       <fix>Specify the user-visible state for empty extraction, partial extraction, and extraction timeout, plus whether a retry is offered.</fix>
       <example>If extraction returns under 200 characters, show "Couldn't read this page" with a Retry button; never send a near-empty document to the model.</example>
       <confidence>High</confidence>
+      <patch>
+        <action>append</action>
+        <kind>list</kind>
+        <targetHeading>Content Extraction</targetHeading>
+        <content>Extraction failure handling:
+
+- Empty extraction (&lt;200 characters): show "Couldn't read this page" with a Retry button; no API call is made.
+- Partial extraction (page still loading): wait up to 2s for DOM settle, then extract once more; proceed with whatever is captured and flag the review as "partial page".
+- Extraction timeout (&gt;5s): fail the run with "This page took too long to read — reload and retry."
+- Retry is offered in every failure state and re-runs extraction only, not the review context flow.</content>
+        <rationale>Defines the user-visible behaviour for every extraction failure mode so engineering does not invent fallback UX.</rationale>
+        <confidence>85</confidence>
+      </patch>
     </issue>
     <issue>
       <title>Review-run states are not enumerated</title>
@@ -33,6 +47,24 @@ const PM_REVIEW = `<review>
       <impact>State handling ends up implicit in component code; cancellation and re-run behaviour will be inconsistent.</impact>
       <fix>Enumerate the run states, the transitions between them, and what the user can do in each state.</fix>
       <confidence>High</confidence>
+      <patch>
+        <action>replace</action>
+        <kind>table</kind>
+        <targetHeading>PM Review flow</targetHeading>
+        <content>Review-run state machine:
+
+| State | Entered when | User can |
+| --- | --- | --- |
+| Idle | Panel opens / previous run cleared | Run review |
+| Running | Run clicked and extraction succeeded | Cancel |
+| Failed | Extraction, API, or parse error | Retry, view error detail |
+| Rate-limited | Daily cap reached | Wait for reset (shown in message) |
+| Complete | Results rendered | Copy, re-run, give feedback |
+
+Transitions: Idle → Running → Complete or Failed; Running → Idle on Cancel; any state → Rate-limited when the cap trips. A re-run from Complete discards the previous result after confirmation.</content>
+        <rationale>Enumerates the full state machine so cancellation and re-run behaviour are consistent across components.</rationale>
+        <confidence>78</confidence>
+      </patch>
     </issue>
   </critical>
   <medium>
@@ -43,6 +75,14 @@ const PM_REVIEW = `<review>
       <impact>Race conditions between panel state and tab identity; results may render against the wrong page.</impact>
       <fix>Define the behaviour: reviews bind to the tab they started on; switching tabs shows that tab's last result, not the in-flight one.</fix>
       <confidence>Medium</confidence>
+      <patch>
+        <action>append</action>
+        <kind>paragraph</kind>
+        <targetHeading>Side Panel</targetHeading>
+        <content>A review binds to the tab it was started on. If the user switches tabs while a review is in flight, the panel shows the newly active tab's last completed result (or its empty state) and the in-flight review continues in the background; its result is attached to the originating tab and shown when the user returns to it. Closing the originating tab cancels its in-flight review.</content>
+        <rationale>Pins down tab-switch semantics so panel state can never render against the wrong page.</rationale>
+        <confidence>66</confidence>
+      </patch>
     </issue>
     <issue>
       <title>Rate-limit copy is unspecified</title>
@@ -51,6 +91,14 @@ const PM_REVIEW = `<review>
       <impact>Engineering will hardcode a generic error; support burden when users think the product is broken.</impact>
       <fix>Specify the limit-reached message, whether it shows remaining quota, and the reset time (user's local midnight vs UTC).</fix>
       <confidence>High</confidence>
+      <patch>
+        <action>append</action>
+        <kind>paragraph</kind>
+        <targetHeading>Cost Controls</targetHeading>
+        <content>When the daily cap is reached, the Run button is disabled and the panel shows: "Daily review limit reached — resets at midnight (your local time)." The message includes the count used (e.g. "10 of 10 reviews used today"). Remaining quota is shown in Settings at all times. The cap resets at the user's local midnight; quota state is stored client-side and reconciled with the proxy on each run.</content>
+        <rationale>Specifies the exact limit-reached copy, quota visibility, and reset semantics engineering needs.</rationale>
+        <confidence>40</confidence>
+      </patch>
     </issue>
   </medium>
   <minor>
@@ -321,6 +369,23 @@ export const SAMPLE_DEEP_COMPETITOR: CompetitorPayload = {
   },
   recommendation:
     'Avoid competing on PRD generation — own the in-context review moment with graded, evidence-backed readiness.',
+}
+
+/** Canned patch for the demo-mode Retry flow (the sample's minor issue ships
+ * without a <patch>, so the "No AI Draft generated" fallback is demoable). */
+export const SAMPLE_RETRY_PATCH: SuggestedPatch = {
+  version: 1,
+  id: 'retry-sample',
+  action: 'append',
+  kind: 'list',
+  targetHeading: 'Results view',
+  content: `Copy-to-clipboard format:
+
+- Copied content is GitHub-flavored markdown — headings, bullets, and tables survive pasting into Slack, Jira, Notion, and Confluence.
+- Card order in the paste matches the on-screen order; severity chips flatten to a "[Critical]" prefix.
+- Example Slack paste: "*PM Review — Build with Changes (58/100)*" followed by one bullet per issue title.`,
+  rationale: 'States the clipboard format and gives the Slack example the issue asked for.',
+  modelConfidence: 72,
 }
 
 export const SAMPLES: Record<FeatureId, Sample> = {
