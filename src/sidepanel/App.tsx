@@ -19,6 +19,8 @@ import { Settings } from './components/Settings'
 import { HistoryView } from './components/HistoryView'
 import { Onboarding } from './components/Onboarding'
 import { ReviewContextModal } from './components/ReviewContextModal'
+import { ConfirmDialog } from './components/review/ConfirmDialog'
+import { usePatchReview } from './usePatchReview'
 
 const hasChrome = typeof chrome !== 'undefined' && !!chrome.runtime
 
@@ -40,6 +42,16 @@ export default function App() {
   const [deepRunning, setDeepRunning] = useState(false)
   // Pre-check the deep toggle when the modal opens from an empty-tab CTA.
   const [deepDefault, setDeepDefault] = useState(false)
+  // Whether Notion is connected — gates the AI Draft "Apply" button.
+  const [notionConnected, setNotionConnected] = useState(false)
+  // Set while the Apply Accepted confirmation is open.
+  const [pendingApply, setPendingApply] = useState(false)
+
+  // Accept/Reject triage. Keyed on the RESULT's reviewId — deliberately not the
+  // view-gated activeReview below, which goes null while a review is running and
+  // would wipe the triage on every run.
+  const resultReview = result ? getReview(result) : null
+  const patchReview = usePatchReview(resultReview?.reviewId, resultReview?.docMap)
 
   const loadSettings = useCallback(async () => {
     try {
@@ -81,6 +93,16 @@ export default function App() {
     }
   }, [])
 
+  const refreshNotion = useCallback(async () => {
+    if (!hasChrome || !chrome.runtime) return
+    try {
+      const r = await sendMessage({ type: 'NOTION_STATUS' })
+      setNotionConnected(r.ok && r.data.connected)
+    } catch {
+      /* SW unavailable — leave disconnected */
+    }
+  }, [])
+
   useEffect(() => {
     loadSettings()
     refreshPage()
@@ -96,6 +118,12 @@ export default function App() {
       chrome.tabs.onUpdated.removeListener(onUpdated)
     }
   }, [loadSettings, refreshPage])
+
+  // Re-check the Notion connection when returning to the main view (e.g. after
+  // connecting in Settings) so the Apply gate reflects the latest state.
+  useEffect(() => {
+    if (view === 'main') refreshNotion()
+  }, [view, refreshNotion])
 
   const runFeature = async (id: FeatureId) => {
     if (!tabId) {
@@ -130,7 +158,9 @@ export default function App() {
     }
     setRunning(id)
     setError(null)
-    setResult(null)
+    // Deliberately NOT clearing `result`: the review is already hidden while
+    // running, so clearing buys nothing — but keeping it means a run that FAILS
+    // leaves the previous review (and the user's Accept/Reject triage) intact.
     try {
       const res = await sendMessage({ type: 'RUN_FEATURE', tabId, featureId: id, reviewContext })
       await handleResult(res)
@@ -149,7 +179,7 @@ export default function App() {
     setRunning('pm_review')
     setDeepRunning(true)
     setError(null)
-    setResult(null)
+    // See execFeature — a failed deep run must not cost the user their triage.
     try {
       const res = await sendMessage({ type: 'RUN_DEEP_REVIEW', tabId, reviewContext })
       await handleResult(res)
@@ -174,7 +204,7 @@ export default function App() {
   const needsOnboarding = !onboarded && !dismissed
 
   // Structured review of the visible result (null → legacy flat cards).
-  const activeReview = view === 'main' && !running && result ? getReview(result) : null
+  const activeReview = view === 'main' && !running ? resultReview : null
   const openDeepModal = () => {
     setDeepDefault(true)
     setPendingReview(true)
@@ -278,6 +308,9 @@ export default function App() {
                   review={activeReview}
                   url={pageInfo?.url}
                   tabId={tabId}
+                  notionConnected={notionConnected}
+                  patchReview={patchReview}
+                  onRequestApply={() => setPendingApply(true)}
                   onRunDeep={openDeepModal}
                 />
               ) : (
@@ -286,6 +319,30 @@ export default function App() {
           </>
         )}
       </main>
+
+      {pendingApply &&
+        (() => {
+          const { applicable, skipped } = patchReview.planApply()
+          const counts = patchReview.actionCounts(applicable)
+          const parts = [
+            counts.append > 0 && `${counts.append} append${counts.append === 1 ? '' : 's'}`,
+            counts.replace > 0 && `${counts.replace} replace${counts.replace === 1 ? '' : 's'}`,
+            skipped.length > 0 && `${skipped.length} skipped`,
+          ].filter(Boolean) as string[]
+          return (
+            <ConfirmDialog
+              title={`Apply ${applicable.length} change${applicable.length === 1 ? '' : 's'} to your PRD?`}
+              actionSummary={parts.join(' · ')}
+              destinations={applicable.map((d) => d.headingText)}
+              confirmLabel={`Apply ${applicable.length}`}
+              onCancel={() => setPendingApply(false)}
+              onConfirm={() => {
+                setPendingApply(false)
+                if (tabId != null) void patchReview.runBatch(tabId, activeReview?.docMap?.url)
+              }}
+            />
+          )
+        })()}
 
       {pendingReview && (
         <ReviewContextModal

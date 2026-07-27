@@ -1,7 +1,7 @@
 import type { TokenUsage } from '@/lib/types'
 import type { ReviewData } from '@/lib/review'
 import type { AgentResult, CustomerVoiceHypothesis } from '@/lib/agents/types'
-import { PM_REVIEW_SYSTEM } from '@/lib/features/pmReview'
+import { bucketIssues, ISSUE_BUCKETS, PM_REVIEW_SYSTEM } from '@/lib/features/pmReview'
 import { ANALYZE_SYSTEM } from '@/lib/agents/analyzer'
 import { SYNTHESIS_SYSTEM } from '@/lib/agents/synthesis'
 import { COMPETITOR_SYSTEM } from '@/lib/agents/agents/competitor/discovery'
@@ -20,7 +20,7 @@ export const ANALYTICS_SCHEMA_VERSION = 1 as const
  * that forgot the bump. */
 export const PROMPT_VERSIONS: Record<string, string> = {
   analyze: 'analyze_v2_compact_context',
-  pm_review: 'pm_review_v3_xml_readiness',
+  pm_review: 'pm_review_v4_xml_patch',
   customer_voice: 'customer_voice_validate_v1',
   competitor: 'competitor_discover_reason_v1',
   synthesis: 'synthesis_v3_signals',
@@ -87,6 +87,14 @@ export interface FindingRecord {
   text?: string
   recommendation?: string
   suggestedAddition?: string
+  /** AI Draft metadata ONLY — content is deliberately never stored here (it can echo PRD text). */
+  patch?: {
+    id: string
+    kind: string
+    targetHeading: string
+    length: number
+    modelConfidence?: number
+  }
   displayOrder: number
 }
 
@@ -185,6 +193,10 @@ const CATEGORY_MAP: Record<string, { taxonomy: FindingTaxonomy; section: string 
   critical: { taxonomy: { domain: FR, subdomain: 'Specification', type: 'Undefined Behaviour' }, section: 'Functional Specs' },
   medium: { taxonomy: { domain: FR, subdomain: 'Specification', type: 'Undefined Behaviour' }, section: 'Functional Specs' },
   minor: { taxonomy: { domain: FR, subdomain: 'Specification', type: 'Improvement' }, section: 'Functional Specs' },
+  // Phase 7 buckets — mapped explicitly so they don't fall into the {domain:'Other'}
+  // junk drawer, which would make their analytics unusable.
+  technical: { taxonomy: { domain: FR, subdomain: 'Technical Soundness', type: 'Undefined Behaviour' }, section: 'Functional Specs' },
+  compliance: { taxonomy: { domain: 'Compliance', subdomain: 'Policy', type: 'Policy Breach' }, section: 'Functional Specs' },
   missing_requirement: { taxonomy: { domain: FR, subdomain: 'Requirements', type: 'Missing Requirement' }, section: 'Functional Specs' },
   missing_user_flow: { taxonomy: { domain: FR, subdomain: 'User Flow', type: 'Missing Requirement' }, section: 'Functional Specs' },
   missing_edge_case: { taxonomy: { domain: FR, subdomain: 'Edge Cases', type: 'Missing Edge Case' }, section: 'Functional Specs' },
@@ -257,6 +269,9 @@ const SEVERITY_BY_CATEGORY: Record<string, 'high' | 'medium' | 'low'> = {
   critical: 'high',
   medium: 'medium',
   minor: 'low',
+  // Phase 7 buckets. A regulatory breach is treated as high severity.
+  compliance: 'high',
+  technical: 'medium',
 }
 const CONF_NUM: Record<string, number> = { High: 0.9, Medium: 0.6, Low: 0.3 }
 
@@ -288,11 +303,10 @@ export function buildFindingRecords(reviewId: string, review: ReviewData): Findi
 
   const r = review.readiness
   if (r) {
-    const issues = [
-      ...r.critical.map((i) => ({ i, category: 'critical' })),
-      ...r.medium.map((i) => ({ i, category: 'medium' })),
-      ...r.minor.map((i) => ({ i, category: 'minor' })),
-    ]
+    // Derived from ISSUE_BUCKETS — a bucket missed here is never persisted.
+    const issues = ISSUE_BUCKETS.flatMap((b) =>
+      bucketIssues(r, b).map((i) => ({ i, category: b.category })),
+    )
     for (const { i, category } of issues) {
       push(
         { agent: 'pm_review', category, title: i.title },
@@ -302,6 +316,15 @@ export function buildFindingRecords(reviewId: string, review: ReviewData): Findi
           text: i.why,
           recommendation: i.fix,
           suggestedAddition: i.example,
+          patch: i.suggestedPatch
+            ? {
+                id: i.suggestedPatch.id,
+                kind: i.suggestedPatch.kind,
+                targetHeading: i.suggestedPatch.targetHeading,
+                length: i.suggestedPatch.content.length,
+                modelConfidence: i.suggestedPatch.modelConfidence,
+              }
+            : undefined,
         },
       )
     }

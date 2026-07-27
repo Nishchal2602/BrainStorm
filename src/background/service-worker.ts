@@ -1,6 +1,6 @@
-import type { PageInfo, Reply, Request } from '@/lib/messaging/types'
+import type { ApplyPatchRequest, GeneratePatchRequest, PageInfo, Reply, Request } from '@/lib/messaging/types'
 import type { DetectedSource, FeatureId, ResearchDepth, ResultDoc, ReviewContext } from '@/lib/types'
-import { SAMPLE_DEEP_COMPETITOR, SAMPLE_DEEP_VOICE, SAMPLES } from '@/lib/features/samples'
+import { SAMPLE_DEEP_COMPETITOR, SAMPLE_DEEP_VOICE, SAMPLE_RETRY_PATCH, SAMPLES } from '@/lib/features/samples'
 import { getSettings } from '@/lib/storage/settings'
 import { getUserContext } from '@/lib/storage/profile'
 import { buildContextBlock } from '@/lib/context/contextBlock'
@@ -16,7 +16,7 @@ import { createClaudeClient } from '@/lib/claude/client'
 import { config } from '@/lib/config'
 import { extractFromPage } from '@/content/extract'
 import { locateAndHighlight } from '@/content/locate'
-import type { ResolvedTarget } from '@/lib/navigation'
+import { matchHeading, sameDoc, STRICT_MATCH, type ResolvedTarget } from '@/lib/navigation'
 import {
   competitorSections,
   createDefaultOrchestrator,
@@ -30,19 +30,44 @@ import {
   type CustomerVoicePayload,
   type PmReviewAgentPayload,
 } from '@/lib/agents'
-import { parseReadinessReview } from '@/lib/features/pmReview'
+import {
+  bucketIssues,
+  buildGroundedPatchPrompt,
+  buildPatchPrompt,
+  buildRepairPrompt,
+  collectPatchStats,
+  ISSUE_BUCKETS,
+  parseGroundedPatch,
+  parseReadinessReview,
+  parseSinglePatch,
+  patchTargetValid,
+  REVIEW_PAGE_CHARS,
+  validatePatches,
+  type ReadinessReview,
+  type SuggestedPatch,
+} from '@/lib/features/pmReview'
+import { buildSectionView } from '@/lib/sectionView'
+import { detectedPackIds, detectObligations } from '@/lib/obligations/detect'
+import { renderCoverageChecklist } from '@/lib/obligations/render'
+import { validateDraft, violationCodes } from '@/lib/draftValidators'
+import { anchorPatch, anchorPatches } from '@/lib/editor/anchor'
+import { getEditor } from '@/lib/editor/registry'
+import type { ApplyResult } from '@/lib/editor/types'
+import { getNotionAuth, setNotionAuth } from '@/lib/storage/notionAuth'
 import type { ReviewData, ReviewResultDoc } from '@/lib/review'
 import { addRunRecord, buildRunRecord } from '@/lib/storage/intelligence'
 import {
   buildReviewRecord,
   encodeRaw,
   execFromAgentResult,
+  findingIdFor,
   newId,
   stageExec,
   type AgentExecutionRecord,
   type RawOutput,
 } from '@/lib/analytics'
 import { addReviewRecord } from '@/lib/storage/reviews'
+import { recordPatchEvent } from '@/lib/storage/patchEvents'
 
 // Open the side panel when the toolbar icon is clicked.
 chrome.runtime.onInstalled.addListener(() => {
@@ -103,10 +128,11 @@ const DEPTH_USES: Record<ResearchDepth, number> = { quick: 3, standard: 8, deep:
 function readinessReviewData(rawText: string): ReviewData | undefined {
   try {
     const { review } = parseReadinessReview(rawText)
+    // Any bucket counts — a review that found only technical or compliance issues
+    // is still a structured review, and must not fall back to flat cards.
     const hasContent =
       review.readiness != null ||
-      review.critical.length > 0 ||
-      review.medium.length > 0 ||
+      ISSUE_BUCKETS.some((b) => bucketIssues(review, b).length > 0) ||
       review.missingRequirements.length > 0
     return hasContent ? { decision: review.decision, readiness: review, deep: false } : undefined
   } catch {
@@ -116,6 +142,48 @@ function readinessReviewData(rawText: string): ReviewData | undefined {
 
 function agentData<T>(results: AgentResult[], agentId: string): T | undefined {
   return results.find((r) => r.agentId === agentId && r.status === 'ok')?.data as T | undefined
+}
+
+/**
+ * Post-parse patch pass: drop patches whose targetHeading isn't a real outline
+ * heading (a hallucinated heading would mis-place a Phase-2 apply), then log
+ * METADATA only — ids/kinds/headings/lengths, never patch or PRD content.
+ */
+function finalizePatches(
+  readiness: ReadinessReview | undefined,
+  headings: Array<{ text: string }> | undefined,
+  generationMs?: number,
+): void {
+  if (!readiness) return
+  // Non-destructive: unverified headings are logged, not dropped (Apply is disabled).
+  const unverifiedTargets = validatePatches(readiness, (headings ?? []).map((h) => h.text))
+  const stats = collectPatchStats(readiness)
+  console.log('[PM Co-Pilot] patches generated', {
+    count: stats.count,
+    unverifiedTargets,
+    generationMs,
+    patches: stats.patches,
+  })
+}
+
+/** One 'generated' lifecycle event per surviving patch (the funnel's entry point). */
+async function recordGeneratedPatches(reviewId: string, readiness?: ReadinessReview): Promise<void> {
+  if (!readiness) return
+  // Derived from ISSUE_BUCKETS — a bucket missed here loses its funnel entry point.
+  for (const bucket of ISSUE_BUCKETS) {
+    const category = bucket.category
+    for (const issue of bucketIssues(readiness, bucket)) {
+      const p = issue.suggestedPatch
+      if (!p) continue
+      await recordPatchEvent({
+        type: 'generated',
+        reviewId,
+        patchId: p.id,
+        findingId: findingIdFor({ agent: 'pm_review', category, title: issue.title }),
+        length: p.content.length,
+      })
+    }
+  }
 }
 
 const DEEP_DECISION_LABEL: Record<BuildDecision, string> = {
@@ -179,6 +247,212 @@ async function handleValidateKey(apiKey: string): Promise<Reply<{ valid: true }>
   return { ok: true, data: { valid: true } }
 }
 
+/**
+ * Regenerate ONE issue's AI Draft (the Retry button) without rerunning the
+ * whole review — the issue is already known; only the patch text is produced.
+ */
+async function handleGeneratePatch(req: GeneratePatchRequest): Promise<Reply<{ patch: SuggestedPatch }>> {
+  const settings = await getSettings()
+
+  // Demo mode: canned patch so the Retry flow works without a key.
+  if (settings.demoMode || config.demoMode) {
+    await new Promise((r) => setTimeout(r, 400))
+    return { ok: true, data: { patch: { ...SAMPLE_RETRY_PATCH, id: req.patchId } } }
+  }
+
+  if (!config.hasBackend && !settings.apiKey) {
+    return { ok: false, error: 'Add your API key in Settings first.' }
+  }
+
+  const raw = await injectExtract(req.tabId)
+  // The patch must be generated from the document the review actually ran on.
+  if (req.reviewUrl && !sameDoc(raw.url, req.reviewUrl)) {
+    return {
+      ok: false,
+      error: 'Open the reviewed document in this tab, then retry.',
+      code: 'WRONG_DOC',
+    }
+  }
+  // Same budget as the review's standard depth — a Retry must be able to find the
+  // section it is regenerating, and this used to be an independent hardcoded 14k.
+  const ctx = buildPageContext(raw, detectSource(raw.url), REVIEW_PAGE_CHARS.standard)
+  const headings = ctx.headings ?? []
+  const outline = headings.map((h) => h.text)
+
+  // Ground the generation: resolve the issue's location FIRST, then show the model
+  // that section's REAL content — line-numbered, with block types — so it can
+  // extend what is there instead of guessing. It still never picks a heading
+  // (Phase-3 safety). Falls back to the outline prompt only when `where` can't be
+  // resolved (that patch comes back unanchored → Apply disabled, Copy still works).
+  const groundedIdx =
+    // STRICT: the resolved section is what we SHOW the model as ground truth —
+    // grounding it on the wrong section is worse than not grounding at all.
+    req.issue.where && headings.length ? matchHeading(req.issue.where, outline, STRICT_MATCH) : null
+  const view = groundedIdx !== null ? buildSectionView(ctx.content, headings, groundedIdx) : undefined
+  const grounded = view !== undefined
+  const prompt = view
+    ? buildGroundedPatchPrompt(req.issue, view)
+    : buildPatchPrompt(req.issue, outline, ctx.content)
+
+  const model = settings.model === 'auto' ? 'claude-sonnet-4-6' : settings.model
+  const client = createClaudeClient(model, settings.apiKey)
+  const clientId = await getClientId()
+  const startedAt = Date.now()
+
+  const headingText = groundedIdx !== null ? headings[groundedIdx].text : ''
+  const run = async (p: { system: string; pageText: string; taskText: string }) => {
+    const gen = await client.generate({
+      system: p.system,
+      pageText: p.pageText,
+      taskText: p.taskText,
+      maxTokens: 1500,
+      meta: { clientId, depth: settings.researchDepth },
+    })
+    return view
+      ? parseGroundedPatch(gen.text, req.patchId, headingText)
+      : parseSinglePatch(gen.text, req.patchId)
+  }
+
+  let patch = await run(prompt)
+  if (!patch) {
+    return { ok: false, error: 'The model did not return a usable patch. Try again.' }
+  }
+
+  // Deterministic self-review. These rules enforce what PATCH_RULES already asks
+  // for; instructions alone don't hold, and a model grading its own prose costs
+  // twice as much for a worse signal.
+  let check = validateDraft(patch.content, view)
+  let repaired = false
+  if (!check.ok && view) {
+    // ONE bounded repair pass, naming the exact violations.
+    const retryPatch = await run(buildRepairPrompt(patch.content, check.violations, view))
+    if (retryPatch) {
+      const recheck = validateDraft(retryPatch.content, view)
+      // Keep the repair only if it actually improved things.
+      if (recheck.violations.length < check.violations.length) {
+        patch = retryPatch
+        check = recheck
+        repaired = true
+      }
+    }
+  }
+  const generationMs = Date.now() - startedAt
+
+  // Anchor the fresh patch locally so Apply is enabled (never model-decided).
+  await anchorPatch(patch, ctx.content, headings)
+  // Non-fatal: an unverified heading is fine while Apply is disabled — keep the draft.
+  // Metadata only — never patch or PRD content (violation CODES, not messages).
+  console.log('[PM Co-Pilot] draft generated', {
+    patchId: patch.id,
+    kind: patch.kind,
+    targetHeading: patch.targetHeading,
+    grounded,
+    sectionLines: view?.lines.length,
+    sectionHasList: view?.hasList,
+    repaired,
+    violations: violationCodes(check.violations),
+    anchored: patch.anchor != null,
+    targetVerified: patchTargetValid(patch.targetHeading, outline),
+    length: patch.content.length,
+    generationMs,
+  })
+  return { ok: true, data: { patch } }
+}
+
+const APPLY_ERRORS: Record<string, string> = {
+  WRONG_DOC: 'Open the reviewed Notion page in this tab, then apply.',
+  UNSUPPORTED_SITE: 'Direct editing is not supported on this site yet.',
+}
+
+/**
+ * Apply ONE (possibly user-edited) AI Draft to the live document via the DOM.
+ * Same same-doc guard as handleGeneratePatch; the editor owns the DOM mutation.
+ * Logs METADATA only — never the body/PRD text.
+ */
+async function handleApplyPatch(req: ApplyPatchRequest): Promise<Reply<ApplyResult>> {
+  const startedAt = Date.now()
+  const { url } = await injectGetPageInfo(req.tabId)
+  if (req.reviewUrl && !sameDoc(url, req.reviewUrl)) {
+    return { ok: false, error: APPLY_ERRORS.WRONG_DOC, code: 'WRONG_DOC' }
+  }
+  const auth = await getNotionAuth()
+  if (!auth) {
+    return { ok: false, error: 'Connect Notion in Settings to apply.', code: 'NOT_CONNECTED' }
+  }
+  const editor = getEditor(url, auth.accessToken)
+  if (!editor) {
+    return { ok: false, error: APPLY_ERRORS.UNSUPPORTED_SITE, code: 'UNSUPPORTED_SITE' }
+  }
+  const result = await editor.applyPatch({
+    tabId: req.tabId,
+    url,
+    token: auth.accessToken,
+    action: req.action,
+    anchor: req.anchor,
+    body: req.body,
+  })
+  let hostname = ''
+  try {
+    hostname = new URL(url).hostname
+  } catch {
+    /* ignore */
+  }
+  console.log('[PM Co-Pilot] patch apply', {
+    targetHeading: req.anchor.headingText,
+    hostname,
+    success: result.success,
+    code: result.code,
+    insertedBlocks: result.insertedBlocks,
+    durationMs: Date.now() - startedAt,
+  })
+  return { ok: true, data: result }
+}
+
+/** Exchange a Notion OAuth code for a token via the Worker proxy (holds the secret), then persist it. */
+async function handleExchangeNotionCode(
+  code: string,
+  redirectUri: string,
+): Promise<Reply<{ workspaceName?: string }>> {
+  if (!config.notionOauthUrl) {
+    return { ok: false, error: 'Notion connection is not configured in this build.' }
+  }
+  let res: Response
+  try {
+    res = await fetch(config.notionOauthUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, redirectUri }),
+    })
+  } catch {
+    return { ok: false, error: 'Could not reach the connection service. Try again.' }
+  }
+  const data = (await res.json().catch(() => ({}))) as {
+    access_token?: string
+    workspace_id?: string
+    workspace_name?: string
+    workspace_icon?: string
+    bot_id?: string
+    error?: string
+  }
+  if (!res.ok || !data.access_token) {
+    return { ok: false, error: data.error || 'Notion rejected the connection. Try again.' }
+  }
+  await setNotionAuth({
+    accessToken: data.access_token,
+    workspaceId: data.workspace_id,
+    workspaceName: data.workspace_name,
+    workspaceIcon: data.workspace_icon,
+    botId: data.bot_id,
+    connectedAt: Date.now(),
+  })
+  return { ok: true, data: { workspaceName: data.workspace_name } }
+}
+
+async function handleNotionStatus(): Promise<Reply<{ connected: boolean; workspaceName?: string }>> {
+  const auth = await getNotionAuth()
+  return { ok: true, data: { connected: !!auth, workspaceName: auth?.workspaceName } }
+}
+
 async function handleRunFeature(
   tabId: number,
   featureId: FeatureId,
@@ -228,6 +502,7 @@ async function handleRunFeature(
         agents: [stageExec('pm_review', 'demo')],
         rawOutputs: { pm_review: await encodeRaw(sample.text) },
       })
+      await recordGeneratedPatches(reviewId, review.readiness)
     }
     await addHistory({
       id: newHistoryId(),
@@ -258,11 +533,28 @@ async function handleRunFeature(
     feature.systemInstructions,
   ].join('\n\n')
   const pageText = contextToPromptBlock(ctx)
-  const taskText = feature.buildTask(ctx)
 
   // User profile + per-review context, injected BEFORE the document.
   const userContext = await getUserContext()
   const contextBlock = buildContextBlock(userContext, reviewContext) || undefined
+
+  // Coverage checklist (Phase 7). Detection runs on raw.content — the FULL
+  // untruncated document — so an attribute stated in a part the model won't see
+  // still counts as specified. If the document is STILL truncated at this budget we
+  // suppress the checklist entirely rather than ask closed questions about text
+  // nobody can read: a fabricated "missing requirement" costs more trust than a
+  // missed one.
+  let coverage = ''
+  if (feature.id === 'pm_review' && !ctx.truncated) {
+    const gaps = detectObligations(raw.content, ctx.headings, { industry: userContext.industry })
+    coverage = renderCoverageChecklist(gaps)
+    console.log('[PM Co-Pilot] coverage scan', {
+      packs: detectedPackIds(raw.content, { industry: userContext.industry }),
+      gaps: gaps.length,
+      obligations: gaps.map((g) => g.obligation.id),
+    })
+  }
+  const taskText = coverage ? `${coverage}\n\n${feature.buildTask(ctx)}` : feature.buildTask(ctx)
 
   const model = settings.model === 'auto' ? feature.model : settings.model
   const client = createClaudeClient(model, settings.apiKey)
@@ -304,6 +596,10 @@ async function handleRunFeature(
   // Document map for jump-to-PRD navigation (live runs only — headings were
   // captured from the real page during extraction).
   if (review && ctx.headings?.length) review.docMap = { url: ctx.url, headings: ctx.headings }
+  // Anchor patches locally (Apply targets), then validate + log BEFORE capture
+  // so analytics only sees survivors.
+  if (review?.readiness) await anchorPatches(review.readiness, { content: ctx.content, headings: ctx.headings })
+  finalizePatches(review?.readiness, ctx.headings, llmMs)
   const result: ReviewResultDoc = {
     feature: feature.id,
     title: feature.label,
@@ -331,6 +627,7 @@ async function handleRunFeature(
       agents: [stageExec('pm_review', model, gen.usage, llmMs)],
       rawOutputs: { pm_review: await encodeRaw(gen.text) },
     })
+    await recordGeneratedPatches(reviewId, review.readiness)
   }
 
   await addHistory({
@@ -426,6 +723,7 @@ async function handleDeepReview(
         stageExec(a, 'demo'),
       ),
     })
+    await recordGeneratedPatches(reviewId, review.readiness)
     await addHistory({
       id: newHistoryId(),
       timestamp: Date.now(),
@@ -447,7 +745,7 @@ async function handleDeepReview(
   const raw = await injectExtract(tabId)
   const extractMs = Date.now() - extractStart
   const source = detectSource(raw.url)
-  const ctx = buildPageContext(raw, source, 20_000)
+  const ctx = buildPageContext(raw, source, REVIEW_PAGE_CHARS.deep)
   const userContext = await getUserContext()
   const clientId = await getClientId()
 
@@ -507,6 +805,10 @@ async function handleDeepReview(
       .map((w) => ({ text: w.opportunity, source: w.rationale })),
     deep: true,
   }
+  // Anchor patches locally (Apply targets), then validate + log BEFORE capture
+  // so analytics only sees survivors.
+  if (review.readiness) await anchorPatches(review.readiness, { content: ctx.content, headings: ctx.headings })
+  finalizePatches(review.readiness, ctx.headings, llmMs)
   const result: ReviewResultDoc = {
     feature: 'pm_review',
     title: 'Deep Intelligence',
@@ -538,6 +840,7 @@ async function handleDeepReview(
     agents: agentExecs,
     rawOutputs,
   })
+  await recordGeneratedPatches(reviewId, review.readiness)
 
   const ts = Date.now()
   // Capture the structured run (foundation for the Intelligence Graph).
@@ -581,6 +884,14 @@ async function dispatch(req: Request): Promise<Reply<unknown>> {
       return handleValidateKey(req.apiKey)
     case 'JUMP_TO_REFERENCE':
       return handleJumpToReference(req.tabId, req.target)
+    case 'APPLY_PATCH':
+      return handleApplyPatch(req)
+    case 'GENERATE_PATCH':
+      return handleGeneratePatch(req)
+    case 'EXCHANGE_NOTION_CODE':
+      return handleExchangeNotionCode(req.code, req.redirectUri)
+    case 'NOTION_STATUS':
+      return handleNotionStatus()
     default:
       return { ok: false, error: 'Unknown request.' }
   }

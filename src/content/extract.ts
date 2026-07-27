@@ -199,20 +199,49 @@ export function extractFromPage(): RawExtract {
     if (parent && parent.id && parent.children.length <= 3) return parent.id
     return undefined
   }
+  // Enclosing [data-block-id] (Notion) — a session-scope fast path for apply.
+  const headingBlockId = (el: HTMLElement): string | undefined =>
+    (el.closest('[data-block-id]') as HTMLElement | null)?.getAttribute('data-block-id') ?? undefined
+  // Notion renders headings as div blocks (not real h1–h3); level comes from the
+  // block class. Recognizing them here makes headings/anchoring work on Notion.
+  const NOTION_HEADING_LEVEL: Record<string, number> = {
+    'notion-header-block': 1,
+    'notion-sub_header-block': 2,
+    'notion-sub_sub_header-block': 3,
+  }
+  const notionHeadingLevel = (el: HTMLElement): number | undefined => {
+    for (const cls of Object.keys(NOTION_HEADING_LEVEL)) {
+      if (el.classList.contains(cls)) return NOTION_HEADING_LEVEL[cls]
+    }
+    return undefined
+  }
+  const headingLevel = (el: HTMLElement): number | undefined =>
+    /^H[1-6]$/.test(el.tagName) ? Number(el.tagName[1]) : notionHeadingLevel(el)
   const buildHeadings = (
     root: HTMLElement,
-  ): Array<{ level: number; text: string; id?: string; path: string[] }> => {
-    const out: Array<{ level: number; text: string; id?: string; path: string[] }> = []
+  ): Array<{ level: number; text: string; id?: string; path: string[]; blockId?: string }> => {
+    const out: Array<{ level: number; text: string; id?: string; path: string[]; blockId?: string }> = []
     // Stack of ancestor heading texts by level (path[0] = nearest h1 above, …).
     const stack: string[] = []
-    for (const h of Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6'))) {
+    // Real headings AND Notion heading blocks, in document order.
+    const els = root.querySelectorAll(
+      'h1,h2,h3,h4,h5,h6,.notion-header-block,.notion-sub_header-block,.notion-sub_sub_header-block',
+    )
+    for (const h of Array.from(els)) {
       const el = h as HTMLElement
       if (el.closest('nav,header,footer,aside')) continue
+      const level = headingLevel(el)
+      if (level == null) continue
       const text = (el.innerText ?? '').replace(/\s+/g, ' ').trim()
       if (!text) continue
-      const level = Number(el.tagName[1])
       stack.length = Math.max(0, level - 1)
-      out.push({ level, text, id: headingAnchorId(el), path: stack.filter(Boolean).slice(0, 4) })
+      out.push({
+        level,
+        text,
+        id: headingAnchorId(el),
+        path: stack.filter(Boolean).slice(0, 4),
+        blockId: headingBlockId(el),
+      })
       stack[level - 1] = text
       if (out.length >= MAX_HEADINGS) break
     }
@@ -224,7 +253,8 @@ export function extractFromPage(): RawExtract {
   const detectSrc = (): string => {
     const host = location.hostname
     const path = location.pathname
-    if (host.endsWith('notion.so') || host.endsWith('notion.site')) return 'notion'
+    if (host.endsWith('notion.so') || host.endsWith('notion.site') || host.endsWith('notion.com'))
+      return 'notion'
     if (host === 'linear.app' || host.endsWith('.linear.app')) return 'linear'
     if (host === 'docs.google.com') return 'gdocs'
     if (host.endsWith('atlassian.net') || host.includes('jira') || host.includes('confluence')) {
@@ -282,7 +312,7 @@ export function extractFromPage(): RawExtract {
 
   let content = ''
   let outline = ''
-  let headings: Array<{ level: number; text: string; id?: string; path: string[] }> = []
+  let headings: Array<{ level: number; text: string; id?: string; path: string[]; blockId?: string }> = []
   try {
     content = toMarkdown(root)
     outline = buildOutline(root)

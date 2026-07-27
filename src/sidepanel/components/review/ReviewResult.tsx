@@ -3,6 +3,7 @@ import type { ResultDoc } from '@/lib/types'
 import type { ReviewData } from '@/lib/review'
 import { formatTokens } from '@/lib/usage'
 import { resolveReference, sameDoc, type JumpReference } from '@/lib/navigation'
+import type { PatchReview } from '@/sidepanel/usePatchReview'
 import { sendMessage } from '@/lib/messaging/types'
 import { Toast } from './bits'
 import { ReviewTab } from './ReviewTab'
@@ -55,12 +56,20 @@ export function ReviewResult({
   review,
   url,
   tabId,
+  notionConnected,
+  patchReview,
+  onRequestApply,
   onRunDeep,
 }: {
   result: ResultDoc
   review: ReviewData
   url?: string
   tabId?: number | null
+  notionConnected?: boolean
+  /** Accept/Reject triage, owned by App so it survives tab + view changes. */
+  patchReview?: PatchReview
+  /** Opens the Apply Accepted confirmation (the dialog is mounted at App level). */
+  onRequestApply?: () => void
   onRunDeep: () => void
 }) {
   const [tab, setTab] = useState<Tab>('review')
@@ -129,6 +138,11 @@ export function ReviewResult({
           insights={review.insights}
           reviewId={review.reviewId}
           url={url}
+          docUrl={review.docMap?.url}
+          tabId={tabId}
+          notionConnected={notionConnected}
+          patchReview={patchReview}
+          onRequestApply={onRequestApply}
           onJump={handleJump}
         />
       )}

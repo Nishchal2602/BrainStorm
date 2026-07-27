@@ -1,5 +1,6 @@
 import type { ResultDoc } from '@/lib/types'
 import type { ReadinessReview } from '@/lib/features/pmReview'
+import { ISSUE_BUCKETS } from '@/lib/features/pmReview'
 import type { CompetitorPayload, CustomerVoicePayload } from '@/lib/agents/types'
 import type { DocMap } from '@/lib/navigation'
 
@@ -42,9 +43,29 @@ export interface ReviewResultDoc extends ResultDoc {
   review?: ReviewData
 }
 
-/** The structured review when present and non-empty; null → legacy flat cards. */
+/**
+ * The structured review when present and non-empty; null → legacy flat cards.
+ *
+ * Also the ONE place stored reviews are normalized. `pm_history` holds 50 records
+ * written before Phase 7's issue buckets existed, and there is no ErrorBoundary
+ * anywhere in the panel — so a component reading `readiness.technical.length` on an
+ * old record would throw and blank the entire side panel with no way out. Filling
+ * absent buckets with [] here lets every consumer stay simple and non-defensive.
+ */
 export function getReview(r: ResultDoc): ReviewData | null {
   const review = (r as ReviewResultDoc).review
   if (!review) return null
-  return review.readiness || review.voice || review.competitor ? review : null
+  if (!(review.readiness || review.voice || review.competitor)) return null
+  if (!review.readiness) return review
+
+  const readiness = review.readiness
+  const missing = ISSUE_BUCKETS.filter((b) => readiness[b.key] === undefined)
+  if (!missing.length) return review
+  return {
+    ...review,
+    readiness: {
+      ...readiness,
+      ...(Object.fromEntries(missing.map((b) => [b.key, []])) as Record<string, never[]>),
+    },
+  }
 }

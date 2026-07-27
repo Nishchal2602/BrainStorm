@@ -3,7 +3,14 @@ import type { ReadinessIssue, ReadinessReview } from '@/lib/features/pmReview'
 import type { ProductInsight } from '@/lib/review'
 import type { FindingSource } from '@/lib/analytics'
 import type { JumpReference } from '@/lib/navigation'
+import { sameDoc } from '@/lib/navigation'
+import { bucketIssues, ISSUE_BUCKETS } from '@/lib/features/pmReview'
+import { COMPLIANCE_DISCLAIMER } from '@/lib/obligations/packs/compliance'
+import { countStatuses } from '@/lib/patchReview'
+import type { PatchReview } from '@/sidepanel/usePatchReview'
 import { Accordion, Chip, JumpText, Thumbs, firstSentence, type ChipTone } from './bits'
+import { AiDraft } from './AiDraft'
+import { TriageBar } from './TriageBar'
 
 // PM Review pane: Decision Confidence → Functional Specs (accordion of chip
 // rows) → Non-Functional Specs → Strengths → Product Opportunities.
@@ -42,29 +49,43 @@ function IssueRow({
   chip,
   tone,
   category,
+  patchId,
   reviewId,
   url,
+  docUrl,
+  tabId,
+  patchReview,
+  note,
   onJump,
 }: {
   issue: ReadinessIssue
   chip: string
   tone: ChipTone
   category: string
+  /** Stable `${severity}-${index}` — equals issue.suggestedPatch.id when present. */
+  patchId: string
   reviewId?: string
   url?: string
+  docUrl?: string
+  tabId?: number | null
+  patchReview?: PatchReview
+  /** Standing caveat for the row (compliance findings carry the not-legal-advice note). */
+  note?: string
   onJump?: (ref: JumpReference) => void
 }) {
   // Where is hoisted out of the uniform list: it's the navigable reference.
+  // The legacy "Suggested addition" row yields to the AI Draft when a patch exists.
   const details = [
     issue.impact && (['Impact', issue.impact] as const),
     issue.fix && (['Fix', issue.fix] as const),
-    issue.example && (['Suggested addition', issue.example] as const),
+    issue.example && !issue.suggestedPatch && (['Suggested addition', issue.example] as const),
   ].filter(Boolean) as ReadonlyArray<readonly [string, string]>
 
   return (
     <Row chip={chip} tone={tone} source={{ agent: 'pm_review', category, title: issue.title }} reviewId={reviewId} url={url}>
       <p className="text-[13px] leading-snug text-slate-800">{issue.title}</p>
       {issue.why && <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{issue.why}</p>}
+      {note && <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700">{note}</p>}
       {(issue.where || details.length > 0) && (
         <details className="mt-1.5">
           <summary className="cursor-pointer select-none text-[11px] font-medium text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden">
@@ -96,6 +117,16 @@ function IssueRow({
           </dl>
         </details>
       )}
+      <AiDraft
+        issue={issue}
+        category={category}
+        patchId={patchId}
+        reviewId={reviewId}
+        docUrl={docUrl}
+        tabId={tabId}
+        patchReview={patchReview}
+        onJump={onJump}
+      />
     </Row>
   )
 }
@@ -105,12 +136,23 @@ export function ReviewTab({
   insights,
   reviewId,
   url,
+  docUrl,
+  tabId,
+  notionConnected,
+  patchReview,
+  onRequestApply,
   onJump,
 }: {
   readiness?: ReadinessReview
   insights?: ProductInsight[]
   reviewId?: string
   url?: string
+  /** URL the review ran on (docMap) — AI Draft Retry targets this document. */
+  docUrl?: string
+  tabId?: number | null
+  notionConnected?: boolean
+  patchReview?: PatchReview
+  onRequestApply?: () => void
   onJump?: (ref: JumpReference) => void
 }) {
   if (!readiness) {
@@ -135,8 +177,18 @@ export function ReviewTab({
     ...r.productQuestions.map((t) => ({ t, category: 'product_question' })),
     ...r.engineeringQuestions.map((t) => ({ t, category: 'engineering_question' })),
   ]
-  const functionalCount =
-    r.critical.length + r.medium.length + r.minor.length + missingFunctional.length + questions.length
+  const bucketCount = ISSUE_BUCKETS.reduce((n, b) => n + bucketIssues(r, b).length, 0)
+  const functionalCount = bucketCount + missingFunctional.length + questions.length
+
+  // Count only rows that actually registered a draft — an issue with no AI Draft
+  // isn't awaiting a decision and must not inflate "pending".
+  const counts = patchReview ? countStatuses(patchReview.states, patchReview.trackedIds()) : null
+  // Same gate the per-card Apply used, now applied once at the commit point.
+  const applyBlocked = !notionConnected
+    ? 'Connect Notion in Settings to apply.'
+    : !sameDoc(url, docUrl)
+      ? 'Open the reviewed Notion page to apply.'
+      : undefined
 
   return (
     <div className="space-y-3">
@@ -163,6 +215,18 @@ export function ReviewTab({
         )}
       </section>
 
+      {/* 1b — Triage summary + the single commit point */}
+      {patchReview && counts && (
+        <TriageBar
+          counts={counts}
+          lastRun={patchReview.lastRun}
+          busy={patchReview.busy}
+          canApply={tabId != null && !applyBlocked}
+          disabledReason={applyBlocked}
+          onApply={() => onRequestApply?.()}
+        />
+      )}
+
       {/* 2 — Functional Specs */}
       {functionalCount > 0 && (
         <Accordion
@@ -170,15 +234,27 @@ export function ReviewTab({
           defaultOpen
           meta={<Chip tone="slate">{functionalCount} Issue{functionalCount === 1 ? '' : 's'}</Chip>}
         >
-          {r.critical.map((i, n) => (
-            <IssueRow key={`c${n}`} issue={i} chip="Critical" tone="rose" category="critical" reviewId={reviewId} url={url} onJump={onJump} />
-          ))}
-          {r.medium.map((i, n) => (
-            <IssueRow key={`m${n}`} issue={i} chip="Medium" tone="amber" category="medium" reviewId={reviewId} url={url} onJump={onJump} />
-          ))}
-          {r.minor.map((i, n) => (
-            <IssueRow key={`n${n}`} issue={i} chip="Minor" tone="sky" category="minor" reviewId={reviewId} url={url} onJump={onJump} />
-          ))}
+          {/* All buckets from ISSUE_BUCKETS, in priority order — adding a dimension
+              never needs a change here again. */}
+          {ISSUE_BUCKETS.flatMap((b) =>
+            bucketIssues(r, b).map((i, n) => (
+              <IssueRow
+                key={`${b.key}-${n}`}
+                issue={i}
+                chip={b.chip}
+                tone={b.chipTone}
+                category={b.category}
+                patchId={`${b.tag}-${n}`}
+                note={b.key === 'compliance' ? COMPLIANCE_DISCLAIMER : undefined}
+                reviewId={reviewId}
+                url={url}
+                docUrl={docUrl}
+                tabId={tabId}
+                patchReview={patchReview}
+                onJump={onJump}
+              />
+            )),
+          )}
           {missingFunctional.map(({ t, category, chip }, n) => (
             <Row key={`${category}-${n}`} chip={chip} tone="rose" source={{ agent: 'pm_review', category, title: t }} reviewId={reviewId} url={url}>
               <p className="text-[13px] leading-snug text-slate-800">{t}</p>

@@ -1,6 +1,13 @@
 import type { ReviewContext, Section, UserContext } from '@/lib/types'
 import { buildContextBlock } from '@/lib/context/contextBlock'
-import { parseReadinessReview, PM_REVIEW_SYSTEM, type ReadinessIssue } from '@/lib/features/pmReview'
+import {
+  bucketIssues,
+  collectPatchStats,
+  ISSUE_BUCKETS,
+  parseReadinessReview,
+  PM_REVIEW_SYSTEM,
+  type ReadinessIssue,
+} from '@/lib/features/pmReview'
 import type { Agent } from '../agent'
 import type { LlmPort } from '../llm'
 import type { Logger } from '../logger'
@@ -15,9 +22,7 @@ const CONFIDENCE_NUM: Record<'High' | 'Medium' | 'Low', number> = {
 
 // Caps applied BEFORE synthesis so one verbose review can't dominate the
 // synthesis prompt (sections/payload keep the full lists for the UI).
-const MAX_CRITICAL = 5
-const MAX_MEDIUM = 5
-const MAX_MINOR = 3
+// Per-bucket issue caps now come from ISSUE_BUCKETS[].cap.
 const MAX_MISSING = 5
 const MAX_QUESTIONS = 3
 
@@ -71,13 +76,16 @@ export class PmReviewAgent implements Agent {
       .filter(Boolean)
       .join('\n\n')
 
+    const startedAt = Date.now()
     const { text, usage } = await this.llm.generateText({
       system: PM_REVIEW_SYSTEM,
       user,
-      maxTokens: 6000,
+      // Per-issue patches ride along with the review (up to 12 issues).
+      maxTokens: 9000,
       label: 'pm_review_agent',
       meta: meta.clientId ? { clientId: String(meta.clientId) } : undefined,
     })
+    const generationMs = Date.now() - startedAt
 
     const { review, sections } = parseReadinessReview(text)
 
@@ -92,9 +100,13 @@ export class PmReviewAgent implements Agent {
     const questions = [...review.productQuestions, ...review.engineeringQuestions]
 
     const findings: Finding[] = [
-      ...review.critical.slice(0, MAX_CRITICAL).map((i) => issueFinding(i, 'risk', 'high')),
-      ...review.medium.slice(0, MAX_MEDIUM).map((i) => issueFinding(i, 'risk', 'medium')),
-      ...review.minor.slice(0, MAX_MINOR).map((i) => issueFinding(i, 'insight', 'low')),
+      // Derived from ISSUE_BUCKETS: a bucket missed here makes the deep-path build
+      // decision blind to that whole dimension.
+      ...ISSUE_BUCKETS.flatMap((b) =>
+        bucketIssues(review, b)
+          .slice(0, b.cap)
+          .map((i) => issueFinding(i, b.findingKind, b.findingSeverity)),
+      ),
       ...missing.slice(0, MAX_MISSING).map(
         (m): Finding => ({ title: m.item, detail: `Missing ${m.category}`, kind: 'gap', severity: 'medium' }),
       ),
@@ -110,6 +122,8 @@ export class PmReviewAgent implements Agent {
       })
     }
 
+    // Patch telemetry is metadata only (id/kind/heading/length) — never content.
+    const patchStats = collectPatchStats(review)
     this.logger.info('pm_review agent', {
       readiness: review.readiness,
       decision: review.decision,
@@ -118,6 +132,9 @@ export class PmReviewAgent implements Agent {
       minor: review.minor.length,
       missing: missing.length,
       findings: findings.length,
+      patches: patchStats.count,
+      patchDetails: patchStats.patches,
+      generationMs,
     })
 
     return {
